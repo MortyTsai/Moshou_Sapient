@@ -80,7 +80,7 @@ TAPO_PASS=YourCameraPassword
 2.  打開瀏覽器，訪問 Web 儀表板： `http://127.0.0.1:5000`
 3.  觸發事件（例如，讓人物出現在攝影機畫面中），並檢查 Discord 是否收到通知。
 
-## 開發模式說明 (Development Methodology)
+## 開發模式說明
 
 本專案採用了以 Google Gemini Pro 為核心的 AI 輔助開發模式。在此模式中，開發流程由人類專家主導，並由 AI 負責具體的程式碼實現與分析。
 
