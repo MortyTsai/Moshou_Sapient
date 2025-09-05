@@ -1,0 +1,32 @@
+# 虛擬環境
+venv/
+*.venv/
+.venv/
+
+# Python 快取檔案
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 敏感資訊的環境變數檔案
+.env
+
+# 執行時產生的資料庫檔案
+security_events.db
+security_events.db-shm
+security_events.db-wal
+*.sqlite3
+
+# 執行時產生的 AI 模型引擎
+*.engine
+*.onnx
+*.pt
+
+# 執行時錄製的影片
+captures/
+
+# IDE/編輯器設定檔
+.idea/
+.vscode/
+*.swp

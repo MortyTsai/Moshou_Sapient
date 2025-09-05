@@ -1,0 +1,24 @@
+# requirements.txt
+# Core AI and CV
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+
+# System & Utilities
+python-dotenv>=1.0.0
+numpy>=1.24.0
+
+# Database
+SQLAlchemy>=2.0.0
+
+# Web Dashboard
+Flask>=2.3.0
+
+# Discord Notification
+discord.py>=2.3.0
+
+# Object Tracking
+scikit-learn>=1.3.0
+scikit-image>=0.21.0
+filterpy>=1.4.5
+lap>=0.4.0
+scipy>=1.11.0
