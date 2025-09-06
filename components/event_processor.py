@@ -12,49 +12,65 @@ from datetime import datetime
 from typing import Dict
 
 from ultralytics import YOLO
+from ultralytics.engine.results import Results
 from config import Config
-from components.trackers.sort_tracker import Sort
 from database import SessionLocal
 from models import Event
 
 
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
-                     lock: threading.Lock, model: YOLO, class_names: Dict[int, str], tracker: Sort):
+                     lock: threading.Lock, model: YOLO, class_names: Dict[int, str]):
     """
-    AI推論執行緒: 從佇列中獲取影像, 進行物件偵測與追蹤, 並更新共享狀態。
+    AI 推論執行緒：從佇列中獲取影像，進行物件偵測與追蹤，並更新共享狀態。
+    此版本使用 ultralytics 內建的 model.track() 方法，並載入 custom_botsort.yaml 設定檔。
     """
-    logging.info("推論器: 執行緒已啟動, 使用 GPU。")
+    logging.info("推論器：執行緒已啟動，使用 GPU 與 custom_botsort.yaml 設定。")
+
     while not stop_event.is_set():
         try:
             item = frame_queue.get(timeout=1)
             frame_low_res = cv2.resize(item['frame'], (Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT))
 
-            results = model.predict(frame_low_res, device=0, verbose=False, max_det=10)
+            # 使用 model.track() 進行追蹤，並指定我們的客製化設定檔
+            results: list[Results] = model.track(
+                source=frame_low_res,
+                device=0,
+                verbose=False,
+                persist=True,
+                tracker='custom_botsort.yaml'
+            )
 
-            detections_list = []
-            for r in results:
-                for box in r.boxes:
-                    if class_names[int(box.cls[0])] == 'person' and box.conf[0] > 0.5:
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        conf = box.conf[0].cpu().numpy()
-                        detections_list.append([x1, y1, x2, y2, conf])
+            tracked_objects_list = []
+            person_detected = False
 
-            detections_np = np.array(detections_list) if detections_list else np.empty((0, 5))
-            tracked_objects = tracker.update(detections_np)
+            if results[0].boxes is not None and results[0].boxes.id is not None:
+                boxes = results[0].boxes.xyxy.cpu().numpy()
+                track_ids = results[0].boxes.id.int().cpu().tolist()
+                confs = results[0].boxes.conf.cpu().numpy()
+                clss = results[0].boxes.cls.cpu().numpy()
+
+                for box, track_id, conf, cls_id in zip(boxes, track_ids, confs, clss):
+                    if class_names[int(cls_id)] == 'person' and conf > 0.5:
+                        person_detected = True
+                        x1, y1, x2, y2 = box
+                        tracked_objects_list.append([x1, y1, x2, y2, track_id])
 
             with lock:
-                shared_state['person_detected'] = len(tracked_objects) > 0
-                shared_state['tracked_objects'] = tracked_objects
+                shared_state['person_detected'] = person_detected
+                shared_state['tracked_objects'] = np.array(tracked_objects_list)
 
         except Empty:
             with lock:
-                tracked_objects = tracker.update(np.empty((0, 5)))
-                shared_state['person_detected'] = len(tracked_objects) > 0
-                shared_state['tracked_objects'] = tracked_objects
+                shared_state['person_detected'] = False
+                shared_state['tracked_objects'] = np.empty((0, 5))
             continue
+
         except Exception as e:
-            logging.error(f"推論器: 執行緒發生錯誤: {e}", exc_info=True)
-    logging.info("推論器: 執行緒已停止。")
+            logging.error(f"推論器：執行緒發生錯誤：{e}", exc_info=True)
+            break
+
+    logging.info("推論器：執行緒已停止。")
+
 
 
 def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,

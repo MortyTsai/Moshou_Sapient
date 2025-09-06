@@ -7,7 +7,6 @@ from typing import Dict
 from ultralytics import YOLO
 from components.video_streamer import VideoStreamer
 from components.event_processor import frame_consumer, inference_worker
-from components.trackers.sort_tracker import Sort
 from config import Config
 
 class CameraWorker:
@@ -33,16 +32,28 @@ class CameraWorker:
         self.inference_queue = Queue(maxsize=2)
 
         # 4. 核心元件
-        self.video_streamer = VideoStreamer(src=self.config['rtsp_url'],
-                                            width=Config.ENCODE_WIDTH, height=Config.ENCODE_HEIGHT,
-                                            use_udp=(self.config.get("transport_protocol", "udp").lower() == 'udp'))
-        self.tracker = Sort(max_age=60, min_hits=3, iou_threshold=0.3)
+        self.video_streamer = VideoStreamer(
+            src=self.config['rtsp_url'],
+            width=Config.ENCODE_WIDTH,
+            height=Config.ENCODE_HEIGHT,
+            use_udp=(self.config.get("transport_protocol", "udp").lower() == 'udp')
+        )
+        # self.tracker = Sort(max_age=60, min_hits=3, iou_threshold=0.3) # <--- 刪除此行
 
         # 5. 執行緒
-        self.consumer_thread = threading.Thread(target=frame_consumer, name=f"{self.name}-Consumer",
-                                                args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock))
-        self.inference_thread = threading.Thread(target=inference_worker, name=f"{self.name}-Inference",
-                                                 args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model, self.class_names, self.tracker))
+        self.consumer_thread = threading.Thread(
+            target=frame_consumer,
+            name=f"{self.name}-Consumer",
+            args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock)
+        )
+
+        self.inference_thread = threading.Thread(
+            target=inference_worker,
+            name=f"{self.name}-Inference",
+            # 更新 args，移除 self.tracker
+            args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model, self.class_names)
+        )
+
         self.threads = [self.consumer_thread, self.inference_thread]
 
     def start(self):
