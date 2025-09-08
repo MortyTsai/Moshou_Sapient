@@ -38,7 +38,6 @@
                     <td>{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                     <td>{{ event.event_type }}</td>
                     <td>
-                        <!-- 注意: IDE 中關於 url_for 的警告是正常的，可以忽略 -->
                         <a href="{{ url_for('serve_capture', filename=event.video_filename) }}" target="_blank">
                             {{ event.video_filename }}
                         </a>
