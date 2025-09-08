@@ -1,6 +1,6 @@
 # MoshouSapient: AI 即時影像監控與分析系統
 
-![Project Status: WIP](https://img.shields.io/badge/status-work%20in%20progress-yellow)![Python Version](https://img.shields.io/badge/python-3.11-blue)![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Project Status: WIP](https://img.shields.io/badge/status-work%20in%20progress-yellow) ![Python Version](https://img.shields.io/badge/python-3.11-blue)    ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
 本專案是一個基於 Python 與 NVIDIA TensorRT 的高效能智慧保全系統，旨在探索即時影像處理、物件追蹤與人物重識別 (Re-ID) 技術的整合應用。系統能夠處理 RTSP 影像流，進行即時物件偵測，並在觸發特定事件時，提取人物外觀特徵向量進行持久化儲存，為後續的跨攝影機追蹤與資料檢索奠定基礎。
 
