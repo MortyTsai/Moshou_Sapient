@@ -49,8 +49,14 @@ def main():
         model = YOLO(Config.MODEL_PATH, task='detect')
         warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False)
-        class_names = model.names
         logging.info("[YOLO] TensorRT 模型已成功載入並預熱。")
+
+        logging.info("[Re-ID] 正在載入 yolo11s-cls.pt 作為特徵提取器...")
+        reid_model = YOLO('yolo11s-cls.pt')
+        # 預熱 Re-ID 模型
+        reid_model.predict(warmup_frame, device=0, verbose=False)
+        logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
+
     except Exception as e:
         logging.critical(f"[YOLO] 嚴重錯誤: 無法載入 TensorRT 模型。{e}", exc_info=True)
         return
@@ -72,7 +78,7 @@ def main():
     camera_configs = [
         {"name": "Front-Door-Cam", "rtsp_url": Config.RTSP_URL_HIGH_RES, "transport_protocol": "udp"},
     ]
-    workers = [CameraWorker(config, model, class_names, notifier) for config in camera_configs]
+    workers = [CameraWorker(config, model, reid_model, notifier) for config in camera_configs]
 
     # 5. 啟動 Web 儀表板 (在背景執行緒)
     logging.info("[系統] 正在背景啟動 Web 儀表板...")
