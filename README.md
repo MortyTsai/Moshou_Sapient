@@ -124,9 +124,9 @@ MoshouSapient/
     DISCORD_CHANNEL_ID="YourChannelIDHere"
 
     # Camera Credentials
-    TAPO_IP="YourCameraIPAddress"
-    TAPO_USER="YourCameraUsername"
-    TAPO_PASS="YourCameraPassword"
+    CAM_IP="YourCameraIPAddress"
+    CAM_USER="YourCameraUsername"
+    CAM_PASS="YourCameraPassword"
     ```
 
 2.  **微調追蹤器 (可選)**:
