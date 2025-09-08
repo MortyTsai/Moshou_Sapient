@@ -18,26 +18,31 @@
 MoshouSapient/
 │
 ├── .env                    # 環境變數設定檔 (需手動建立)
+├── .gitignore              # Git 版本控制忽略清單
+├── config.py               # 中央設定檔，管理所有參數與環境變數
 ├── custom_botsort.yaml     # BoT-SORT 追蹤器客製化參數
 ├── database.py             # SQLAlchemy 資料庫初始化與 Session 管理
 ├── export_tensorrt.py      # YOLO 模型轉換為 TensorRT 引擎的腳本
+├── logging_setup.py        # 全域日誌 (Logging) 設定模組
 ├── main.py                 # 專案主程式入口
 ├── models.py               # 資料庫 ORM 模型定義 (Event 表)
 ├── requirements.txt        # Python 依賴套件列表
+├── web_dashboard.py        # Flask Web 應用程式與路由定義
 ├── yolo11s.engine          # (生成) TensorRT 格式的偵測模型
 ├── yolo11s.pt              # (需下載) PyTorch 格式的偵測模型
 ├── yolo11s-cls.pt          # (需下載) PyTorch 格式的 Re-ID 模型
 │
-├── components/
-│   ├── __init__.py
+├── components/             # 核心功能元件
 │   ├── camera_worker.py    # 核心類別，管理單一攝影機的所有執行緒與資源
 │   ├── discord_notifier.py # Discord Bot 通知模組
 │   ├── event_processor.py  # 核心 AI 處理管線 (偵測、追蹤、Re-ID)
 │   ├── reid_utils.py       # Re-ID 相關工具函式 (例如餘弦相似度計算)
 │   └── video_streamer.py   # 使用 FFmpeg 進行 RTSP 影像流讀取的生產者模組
 │
-├── templates/
-│   └── index.html          # Flask Web 儀表板的 HTML 樣板
+├── templates/              # Web 儀表板的 HTML 樣板
+│   └── index.html
+│
+├── captures/               # (動態生成) 儲存事件錄影的資料夾
 │
 └── venv/                   # Python 虛擬環境
 ```
