@@ -2,7 +2,7 @@
 # 此檔案為 BoT-SORT 追蹤器提供了一套完整的參數。
 
 
-tracker_type: botsort
+#tracker_type: botsort
 
 # --- 為維持相容性而保留的官方設定參數 ---
 track_low_thresh: 0.1
@@ -12,9 +12,9 @@ gmc_method: sparseOptFlow
 
 # --- 為增強 Re-ID 穩定性而進行的參數覆寫 ---
 with_reid: True               # <-- 啟用 Re-ID 模組
-model: auto                   # <-- 自動選擇 Re-ID 模型
+model: yolo11s-cls.pt                  # <-- 自動選擇 Re-ID 模型
 track_high_thresh: 0.4        # <-- 首次關聯閾值
 new_track_thresh: 0.45        # <-- 新軌跡建立閾值
-track_buffer: 50              # <-- 軌跡緩衝區
+track_buffer: 70              # <-- 軌跡緩衝區
 proximity_thresh: 0.5         # <-- 鄰近閾值
 appearance_thresh: 0.25       # <-- 外觀匹配閾值
