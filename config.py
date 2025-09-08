@@ -12,11 +12,11 @@ class Config:
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
     DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID")) if os.getenv("DISCORD_CHANNEL_ID") else None
 
-    # Tapo Camera
-    TAPO_IP = os.getenv("TAPO_IP")
-    TAPO_USER = os.getenv("TAPO_USER")
-    TAPO_PASS = os.getenv("TAPO_PASS")
-    RTSP_URL_HIGH_RES = f"rtsp://{TAPO_USER}:{TAPO_PASS}@{TAPO_IP}:554/stream1" if all([TAPO_USER, TAPO_PASS, TAPO_IP]) else None
+    # Camera
+    CAM_IP = os.getenv("CAM_IP")
+    CAM_USER = os.getenv("CAM_USER")
+    CAM_PASS = os.getenv("CAM_PASS")
+    RTSP_URL_HIGH_RES = f"rtsp://{CAM_USER}:{CAM_PASS}@{CAM_IP}:554/stream1" if all([CAM_USER, CAM_PASS, CAM_IP]) else None
 
     # 專案核心設定
     CAPTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
