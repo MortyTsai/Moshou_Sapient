@@ -20,7 +20,7 @@ class Config:
 
     # 專案核心設定
     CAPTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
-    MODEL_PATH = 'yolo11n.engine'
+    MODEL_PATH = 'yolo11s.engine'
 
     # 事件錄影參數
     PRE_EVENT_SECONDS = 2.0
