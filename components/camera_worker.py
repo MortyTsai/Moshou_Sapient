@@ -2,9 +2,10 @@
 import threading
 from queue import Queue
 import logging
-from typing import Dict
-
+import yaml
+from types import SimpleNamespace
 from ultralytics import YOLO
+from ultralytics.trackers import BOTSORT
 from components.video_streamer import VideoStreamer
 from components.event_processor import frame_consumer, inference_worker
 from config import Config
@@ -13,13 +14,30 @@ class CameraWorker:
     """
     封裝單一攝影機所有相關元件和執行緒的類別。
     """
-    def __init__(self, camera_config: dict, model: YOLO, class_names: Dict[int, str], notifier=None):
+    def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
         # 1. 基礎屬性
         self.config = camera_config
         self.model = model
-        self.class_names = class_names
+        self.reid_model = reid_model
         self.notifier = notifier
         self.name = self.config.get("name", "Camera-Default")
+
+        tracker_cfg_path = "custom_botsort.yaml"
+        try:
+            with open(tracker_cfg_path, "r", encoding="utf-8") as f:
+                cfg_dict = yaml.safe_load(f)
+            tracker_args = SimpleNamespace(**cfg_dict)
+            logging.info(f"[{self.name}] 已成功解析追蹤器設定檔: {tracker_cfg_path}")
+
+            self.tracker = BOTSORT(args=tracker_args, frame_rate=30)
+            logging.info(f"[{self.name}] 已手動建立並初始化 BOTSORT 追蹤器。")
+
+        except FileNotFoundError:
+            logging.error(f"[{self.name}] 追蹤器設定檔未找到: {tracker_cfg_path}，追蹤功能將被禁用。")
+            self.tracker = None
+        except Exception as e:
+            logging.error(f"[{self.name}] 解析追蹤器設定檔或建立追蹤器時發生錯誤: {e}", exc_info=True)
+            self.tracker = None
 
         # 2. 狀態管理
         self.stop_event = threading.Event()
@@ -38,7 +56,6 @@ class CameraWorker:
             height=Config.ENCODE_HEIGHT,
             use_udp=(self.config.get("transport_protocol", "udp").lower() == 'udp')
         )
-        # self.tracker = Sort(max_age=60, min_hits=3, iou_threshold=0.3) # <--- 刪除此行
 
         # 5. 執行緒
         self.consumer_thread = threading.Thread(
@@ -47,12 +64,11 @@ class CameraWorker:
             args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock)
         )
 
-        self.inference_thread = threading.Thread(
-            target=inference_worker,
-            name=f"{self.name}-Inference",
-            # 更新 args，移除 self.tracker
-            args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model, self.class_names)
-        )
+        self.inference_thread = threading.Thread(target=inference_worker,
+                                                 name=f"{self.name}-Inference",
+                                                 args=(self.inference_queue, self.shared_state, self.stop_event,
+                                                       self.shared_state_lock, self.model, self.reid_model,
+                                                       self.tracker))
 
         self.threads = [self.consumer_thread, self.inference_thread]
 
