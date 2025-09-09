@@ -144,7 +144,7 @@ MoshouSapient/
     RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
 
     # FILE 模式所需路徑
-    VIDEO_FILE_PATH="videos/your_test_video.mp4"
+    VIDEO_FILE_PATH="videos/input.mp4"
     ```
 
 2.  **微調追蹤器 (可選)**:
