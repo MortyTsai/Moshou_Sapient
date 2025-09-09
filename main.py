@@ -1,5 +1,4 @@
 # main.py
-
 import logging
 import threading
 import sys
@@ -7,7 +6,8 @@ import torch
 import os
 from ultralytics import YOLO
 import numpy as np
-from typing import Optional
+from typing import Optional, Dict, Any
+
 from config import Config
 from logging_setup import setup_logging
 from components.camera_worker import CameraWorker
@@ -33,6 +33,39 @@ def pre_flight_checks():
     logging.info(f"[系統] CUDA 設備檢查通過。偵測到 GPU: {torch.cuda.get_device_name(0)}")
     return True
 
+# --- 新增輔助函式 ---
+def get_camera_config() -> Optional[Dict[str, Any]]:
+    """
+    根據 .env 設定解析並回傳攝影機設定字典。
+    如果設定無效，則回傳 None。
+    """
+
+    if Config.VIDEO_SOURCE_TYPE == "FILE":
+        logging.info(f"[系統] 影像來源模式: 本地檔案 ({Config.VIDEO_FILE_PATH})")
+        if not Config.VIDEO_FILE_PATH or not os.path.exists(Config.VIDEO_FILE_PATH):
+            logging.critical(f"[嚴重錯誤] 檔案未找到: {Config.VIDEO_FILE_PATH}。請檢查 .env 設定。")
+            return None
+        source_uri = Config.VIDEO_FILE_PATH
+        source_name = os.path.basename(source_uri)
+
+    elif Config.VIDEO_SOURCE_TYPE == "RTSP":
+        logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
+        if not Config.RTSP_URL_HIGH_RES:
+            logging.critical("[嚴重錯誤] 未設定攝影機憑證，請檢查 .env 檔案中的 CAM_* 變數。")
+            return None
+        source_uri = Config.RTSP_URL_HIGH_RES
+        source_name = "RTSP-Cam"
+
+    else:
+        logging.critical(f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
+        return None
+
+    return {
+        "name": f"Worker-{source_name}",
+        "rtsp_url": source_uri,
+        "transport_protocol": "udp" if Config.VIDEO_SOURCE_TYPE == "RTSP" else "tcp"
+    }
+
 def main():
     # 1. 初始化
     setup_logging()
@@ -53,7 +86,6 @@ def main():
 
         logging.info("[Re-ID] 正在載入 yolo11s-cls.pt 作為特徵提取器...")
         reid_model = YOLO('yolo11s-cls.pt')
-        # 預熱 Re-ID 模型
         reid_model.predict(warmup_frame, device=0, verbose=False)
         logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
 
@@ -63,50 +95,24 @@ def main():
 
     # 3. 初始化通知器
     notifier = None
-    if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
-        notifier = DiscordNotifier(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
-        notifier.start()
+    if Config.DISCORD_ENABLED:
+        if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
+            notifier = DiscordNotifier(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
+            notifier.start()
+        else:
+            logging.warning("[系統] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
     else:
-        logging.warning("[系統] 未設定 Discord 憑證, 通知功能將被禁用。")
+        logging.info("[系統] Discord 通知功能已被禁用。")
 
     # 4. 建立攝影機設定與 Worker
-    camera_configs = []
-    source_name = ""
-
-    if Config.VIDEO_SOURCE_TYPE == "FILE":
-        logging.info(f"[系統] 影像來源模式: 本地檔案 ({Config.VIDEO_FILE_PATH})")
-        if not Config.VIDEO_FILE_PATH or not os.path.exists(Config.VIDEO_FILE_PATH):
-            logging.critical(f"[嚴重錯誤] 檔案未找到: {Config.VIDEO_FILE_PATH}。請檢查 .env 設定。")
-            if notifier: notifier.stop()
-            return
-        source_uri = Config.VIDEO_FILE_PATH
-        source_name = os.path.basename(source_uri)
-
-    elif Config.VIDEO_SOURCE_TYPE == "RTSP":
-        logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
-        if not Config.RTSP_URL_HIGH_RES:
-            logging.critical("[嚴重錯誤] 未設定攝影機憑證，請檢查 .env 檔案中的 CAM_* 變數。")
-            if notifier: notifier.stop()
-            return
-        source_uri = Config.RTSP_URL_HIGH_RES
-        source_name = "RTSP-Cam"
-
-    else:
-        logging.critical(f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
+    camera_config = get_camera_config()
+    if not camera_config:
         if notifier: notifier.stop()
-        return
+        sys.exit(1)
 
-    camera_configs = [
-        {
-            "name": f"Worker-{source_name}",
-            "rtsp_url": source_uri,
-            "transport_protocol": "udp" if Config.VIDEO_SOURCE_TYPE == "RTSP" else "tcp"
-        }
-    ]
+    workers = [CameraWorker(camera_config, model, reid_model, notifier)]
 
-    workers = [CameraWorker(config, model, reid_model, notifier) for config in camera_configs]
-
-    # 5. 啟動 Web 儀表板 (在背景執行緒)
+    # 5. 啟動 Web 儀表板
     logging.info("[系統] 正在背景啟動 Web 儀表板...")
     flask_app = create_flask_app()
     web_thread = threading.Thread(
@@ -138,7 +144,6 @@ def main():
         logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
         if notifier:
             notifier.stop()
-
 
 if __name__ == "__main__":
     main()
