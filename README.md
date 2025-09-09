@@ -12,7 +12,7 @@
 
 ## 核心特性
 
--   **高效能推論管線**: 整合 **YOLO11s** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
+-   **高效能推論管線**: 整合 **YOLOv8s** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
 -   **穩定的物件追蹤**: 採用 **BOTSORT** 追蹤器，並將偵測與特徵提取流程解耦，手動管理追蹤器生命週期，提升管線的穩定性與可控性。
 -   **事件驅動的特徵持久化**: 系統能在偵測到人物時觸發事件，並提取 Re-ID 特徵向量，使用 SQLAlchemy ORM 與 SQLite (WAL 模式) 將其與事件元數據一同高效存入資料庫。
 -   **即時性能調優**: 透過對處理管線的延遲分析，實施了 **Re-ID 節流 (Throttling)** 策略，有效將事件處理的端到端延遲控制在即時預算內，確保追蹤器穩定運作。
@@ -35,34 +35,38 @@
 ```
 MoshouSapient/
 │
-├── .env                    # 環境變數設定檔 (需手動建立)
-├── .gitignore              # Git 版本控制忽略清單
-├── config.py               # 中央設定檔，管理所有參數與環境變數
-├── custom_botsort.yaml     # BoT-SORT 追蹤器客製化參數
-├── database.py             # SQLAlchemy 資料庫初始化與 Session 管理
-├── export_tensorrt.py      # YOLO 模型轉換為 TensorRT 引擎的腳本
-├── logging_setup.py        # 全域日誌 (Logging) 設定模組
-├── main.py                 # 專案主程式入口
-├── models.py               # 資料庫 ORM 模型定義 (Event 表)
-├── requirements.txt        # Python 依賴套件列表
-├── web_dashboard.py        # Flask Web 應用程式與路由定義
-├── yolo11s.engine          # (生成) TensorRT 格式的偵測模型
-├── yolo11s.pt              # (需下載) PyTorch 格式的偵測模型
-├── yolo11s-cls.pt          # (需下載) PyTorch 格式的 Re-ID 模型
+├── .env # 環境變數設定檔 (需手動建立)
+├── .gitignore # Git 版本控制忽略清單
+├── config.py # 中央設定檔，管理所有參數與環境變數
+├── custom_botsort.yaml # BoT-SORT 追蹤器客製化參數
+├── database.py # SQLAlchemy 資料庫初始化與 Session 管理
+├── export_tensorrt.py # YOLO 模型轉換為 TensorRT 引擎的腳本
+├── logging_setup.py # 全域日誌 (Logging) 設定模組
+├── main.py # 專案主程式入口
+├── models.py # 資料庫 ORM 模型定義 (Event 表)
+├── requirements.txt # Python 依賴套件列表
+├── web_dashboard.py # Flask Web 應用程式與路由定義
+├── yolo11s.engine # (生成) TensorRT 格式的偵測模型
+├── yolo11s.pt # (需下載) PyTorch 格式的偵測模型
+├── yolo11s-cls.pt # (需下載) PyTorch 格式的 Re-ID 模型
 │
-├── components/             # 核心功能元件
-│   ├── camera_worker.py    # 核心類別，管理單一攝影機的所有執行緒與資源
-│   ├── discord_notifier.py # Discord Bot 通知模組
-│   ├── event_processor.py  # 核心 AI 處理管線 (偵測、追蹤、Re-ID)
-│   ├── reid_utils.py       # Re-ID 相關工具函式 (例如餘弦相似度計算)
-│   └── video_streamer.py   # 使用 FFmpeg 進行 RTSP 影像流讀取的生產者模組
+├── components/ # 核心功能元件
+│ ├── camera_worker.py # 核心類別，管理單一攝影機的所有執行緒與資源
+│ ├── discord_notifier.py # Discord Bot 通知模組
+│ ├── event_processor.py # 核心 AI 處理管線 (偵測、追蹤、Re-ID)
+│ ├── runners.py # 執行策略模組 (RTSP/File 模式)
+│ └── video_streamer.py # 使用 FFmpeg 進行影像流讀取的生產者模組
 │
-├── templates/              # Web 儀表板的 HTML 樣板
-│   └── index.html
+├── utils/ # 通用工具函式
+│ ├── reid_utils.py # Re-ID 相關工具函式 (例如餘弦相似度計算)
+│ └── video_utils.py # 影片元數據讀取工具
 │
-├── captures/               # (動態生成) 儲存事件錄影的資料夾
+├── templates/ # Web 儀表板的 HTML 樣板
+│ └── index.html
 │
-└── venv/                   # Python 虛擬環境
+├── captures/ # (動態生成) 儲存事件錄影的資料夾
+│
+└── venv/ # Python 虛擬環境
 ```
 
 ## 環境準備
@@ -77,7 +81,7 @@ MoshouSapient/
 
 1.  **安裝 NVIDIA 工具鏈**:
     -   NVIDIA 驅動程式
-    -   CUDA Toolkit (建議版本 12.9 或更高)
+    -   CUDA Toolkit (建議版本 12.x 或更高)
     -   cuDNN (需對應 CUDA 版本)
     -   TensorRT (需對應 CUDA 版本)
 
@@ -117,8 +121,13 @@ MoshouSapient/
 ## 專案設定與執行
 
 1.  **設定環境變數**:
-    在專案根目錄下建立一個 `.env` 檔案，並填入您的憑證：
+    在專案根目錄下建立一個 `.env` 檔案。根據您要執行的模式，填入對應的憑證：
+
+    **模式一: RTSP 即時串流**
     ```env
+    # .env
+    VIDEO_SOURCE_TYPE="RTSP"
+
     # Discord Bot Credentials
     DISCORD_TOKEN="YourDiscordBotTokenHere"
     DISCORD_CHANNEL_ID="YourChannelIDHere"
@@ -128,6 +137,18 @@ MoshouSapient/
     CAM_USER="YourCameraUsername"
     CAM_PASS="YourCameraPassword"
     ```
+
+    **模式二: 本地檔案處理**
+    ```env
+    # .env
+    VIDEO_SOURCE_TYPE="FILE"
+    VIDEO_FILE_PATH="videos/your_test_video.mp4" # <-- 請確保路徑與檔名正確
+
+    # Discord Bot Credentials
+    DISCORD_TOKEN="YourDiscordBotTokenHere"
+    DISCORD_CHANNEL_ID="YourChannelIDHere"
+    ```
+    *注意: 在 `FILE` 模式下，`CAM_*` 相關變數將被忽略。*
 
 2.  **微調追蹤器 (可選)**:
     專案包含 `custom_botsort.yaml` 檔案，您可以在其中微調追蹤演算法的相關參數。
@@ -139,7 +160,7 @@ MoshouSapient/
 
 4.  **驗證**:
     -   打開瀏覽器，訪問 Web 儀表板： `http://127.0.0.1:5000`
-    -   觸發事件（例如，讓人物出現在攝影機畫面中）。
+    -   觸發事件（例如，讓人物出現在攝影機畫面中，或使用包含人物的影片檔案）。
     -   檢查 Discord 是否收到通知，以及 Web 儀表板是否出現新的事件紀錄。
 
 ## 未來可能的發展方向
