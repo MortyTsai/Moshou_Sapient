@@ -10,10 +10,12 @@ from components.video_streamer import VideoStreamer
 from components.event_processor import frame_consumer, inference_worker
 from config import Config
 
+
 class CameraWorker:
     """
     封裝單一攝影機所有相關元件和執行緒的類別。
     """
+
     def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
         # 1. 基礎屬性
         self.config = camera_config
@@ -21,6 +23,7 @@ class CameraWorker:
         self.reid_model = reid_model
         self.notifier = notifier
         self.name = self.config.get("name", "Camera-Default")
+        self.active_recorders = []
 
         tracker_cfg_path = "custom_botsort.yaml"
         try:
@@ -28,13 +31,8 @@ class CameraWorker:
                 cfg_dict = yaml.safe_load(f)
             tracker_args = SimpleNamespace(**cfg_dict)
             logging.info(f"[{self.name}] 已成功解析追蹤器設定檔: {tracker_cfg_path}")
-
             self.tracker = BOTSORT(args=tracker_args, frame_rate=30)
             logging.info(f"[{self.name}] 已手動建立並初始化 BOTSORT 追蹤器。")
-
-        except FileNotFoundError:
-            logging.error(f"[{self.name}] 追蹤器設定檔未找到: {tracker_cfg_path}，追蹤功能將被禁用。")
-            self.tracker = None
         except Exception as e:
             logging.error(f"[{self.name}] 解析追蹤器設定檔或建立追蹤器時發生錯誤: {e}", exc_info=True)
             self.tracker = None
@@ -61,15 +59,15 @@ class CameraWorker:
         self.consumer_thread = threading.Thread(
             target=frame_consumer,
             name=f"{self.name}-Consumer",
-            args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock)
+            args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock,
+                  self.active_recorders)
         )
-
-        self.inference_thread = threading.Thread(target=inference_worker,
-                                                 name=f"{self.name}-Inference",
-                                                 args=(self.inference_queue, self.shared_state, self.stop_event,
-                                                       self.shared_state_lock, self.model, self.reid_model,
-                                                       self.tracker))
-
+        self.inference_thread = threading.Thread(
+            target=inference_worker,
+            name=f"{self.name}-Inference",
+            args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model,
+                  self.reid_model, self.tracker)
+        )
         self.threads = [self.consumer_thread, self.inference_thread]
 
     def start(self):
@@ -84,14 +82,27 @@ class CameraWorker:
         self.stop_event.set()
         if self.video_streamer:
             self.video_streamer.stop()
+
         for t in self.threads:
             if t.is_alive():
                 logging.info(f"[{self.name}] 等待 {t.name} 執行緒結束...")
                 t.join(timeout=Config.THREAD_JOIN_TIMEOUT)
                 if t.is_alive():
                     logging.warning(f"[{self.name}] {t.name} 執行緒關閉超時。")
+
+        if self.active_recorders:
+            logging.info(f"[{self.name}] 等待 {len(self.active_recorders)} 個事件錄影執行緒完成...")
+            for recorder in self.active_recorders:
+                if recorder.is_alive():
+                    recorder.join()
+            logging.info(f"[{self.name}] 所有事件錄影執行緒已完成。")
+
         logging.info(f"[{self.name}] 已安全關閉。")
 
     def is_alive(self):
+        """
+        定義 Worker 的存活狀態。
+        這是打破 FILE 模式下死鎖的關鍵：只要 video_streamer 停止，就代表 worker 的主要任務已完成。
+        """
         streamer_thread_alive = self.video_streamer.thread and self.video_streamer.thread.is_alive()
         return all(t.is_alive() for t in self.threads) and streamer_thread_alive
