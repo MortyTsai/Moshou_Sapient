@@ -24,7 +24,7 @@ class Config:
     CAM_IP = os.getenv("CAM_IP")
     CAM_USER = os.getenv("CAM_USER")
     CAM_PASS = os.getenv("CAM_PASS")
-    RTSP_URL_HIGH_RES = f"rtsp://{CAM_USER}:{CAM_PASS} @{CAM_IP}:554/stream1" if all(
+    RTSP_URL_HIGH_RES = f"rtsp://{CAM_USER}:{CAM_PASS}@{CAM_IP}:554/stream1" if all(
         [CAM_USER, CAM_PASS, CAM_IP]) else None
 
     # 專案核心設定
