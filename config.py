@@ -28,6 +28,9 @@ class Config:
     CAPTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
     MODEL_PATH = 'yolo11s.engine'
 
+    # Re-ID 相關參數
+    PERSON_MATCH_THRESHOLD = 0.92
+
     # 事件錄影參數
     PRE_EVENT_SECONDS = 2.0
     POST_EVENT_SECONDS = 5.0
