@@ -5,6 +5,7 @@ import threading
 import logging
 import subprocess
 import os
+import pickle
 from collections import deque
 from queue import Empty, Queue
 from datetime import datetime
@@ -12,8 +13,9 @@ import numpy as np
 from ultralytics import YOLO
 from config import Config
 from database import SessionLocal
-from models import Event
-from utils.reid_utils import find_or_create_person
+from models import Event, Person, PersonFeature
+from sqlalchemy.orm import selectinload
+from utils.reid_utils import cosine_similarity, find_best_match_in_gallery
 
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):
@@ -184,17 +186,14 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
 
 
 def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float, reid_features_list: list):
-    """
-    影片編碼執行緒: 使用 FFmpeg (NVENC) 硬體編碼, 處理 Re-ID 特徵, 儲存事件紀錄, 並透過 Notifier 發送。
-    """
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS, 取消編碼。")
         return
 
     num_frames = len(frame_data_list)
     logging.info(f">>> [GPU 編碼器] 收到 {num_frames} 幀影像, 開始以 {actual_fps:.2f} FPS 進行硬體編碼...")
-    start_time = time.time()
 
+    start_time = time.time()
     now = datetime.now()
     timestamp_for_display = now.strftime("%Y-%m-%d %H:%M:%S")
     timestamp_for_filename = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -218,19 +217,15 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
         for frame_data in frame_data_list:
             frame = frame_data['frame'].copy()
             tracked_objects = frame_data['tracks']
-
             for d in tracked_objects:
                 x1, y1, x2, y2, track_id = d[:5]
                 x1_s, y1_s = int(x1 * scale_x), int(y1 * scale_y)
                 x2_s, y2_s = int(x2 * scale_x), int(y2 * scale_y)
                 track_id = int(track_id)
-
                 cv2.rectangle(frame, (x1_s, y1_s), (x2_s, y2_s), (0, 255, 0), 2)
                 label = f"ID: {track_id}"
                 cv2.putText(frame, label, (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
             process.stdin.write(frame.tobytes())
-
     except (BrokenPipeError, IOError):
         logging.warning("[GPU 編碼器] 警告: FFmpeg 程序在寫入完成前已關閉管道。")
     except Exception as e:
@@ -247,25 +242,85 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     logging.info(f"[GPU 編碼器] FFmpeg 硬體編碼耗時: {encoding_duration:.2f} 秒。")
     logging.info(f"[GPU 編碼器] ===> 實際平均編碼幀率: {encoding_fps:.2f} FPS <===")
 
-    person_id_for_event = None
-    if reid_features_list:
-        try:
-            representative_feature = reid_features_list[0]
-            logging.info(f"[特徵處理] 從 {len(reid_features_list)} 個特徵中選取第 1 個進行 Re-ID。")
+    event_person_id_val = None
 
-            db = SessionLocal()
-            try:
-                person_id, is_new = find_or_create_person(db, representative_feature)
-                person_id_for_event = person_id
-                if is_new:
-                    logging.info(f"[Re-ID] 發現新的人物! 已在全域畫廊中建立永久 ID: {person_id}")
+    if reid_features_list:
+        unique_features = []
+        seen_features_hashes = set()
+        for feature in reid_features_list:
+            feature_hash = feature.tobytes()
+            if feature_hash not in seen_features_hashes:
+                unique_features.append(feature)
+                seen_features_hashes.add(feature_hash)
+
+        logging.info(
+            f"[特徵處理] 開始處理事件。原始特徵數: {len(reid_features_list)}, "
+            f"去重後獨立特徵數: {len(unique_features)}"
+        )
+
+        db = SessionLocal()
+        try:
+            event_clusters = []
+            for feature in unique_features:
+                best_match_cluster = None
+                highest_sim = -1.0
+
+                for cluster in event_clusters:
+                    representative_feature = pickle.loads(cluster.features[0].feature)
+                    sim = cosine_similarity(feature, representative_feature)
+                    if sim > highest_sim:
+                        highest_sim = sim
+                        best_match_cluster = cluster
+
+                if highest_sim >= Config.PERSON_MATCH_THRESHOLD and best_match_cluster:
+                    new_feature_obj = PersonFeature(feature=pickle.dumps(feature))
+                    best_match_cluster.features.append(new_feature_obj)  # type: ignore
                 else:
-                    logging.info(f"[Re-ID] 識別出已知人物。匹配到永久 ID: {person_id}")
-            finally:
-                db.close()
+                    new_cluster = Person()
+                    new_feature_obj = PersonFeature(feature=pickle.dumps(feature))
+                    new_cluster.features.append(new_feature_obj)  # type: ignore
+                    event_clusters.append(new_cluster)
+
+            logging.info(f"[特徵處理] 事件內聚類完成，發現 {len(event_clusters)} 個潛在獨立人物。")
+
+            static_persons_gallery = db.query(Person).options(selectinload(Person.features)).all()
+            final_person_map = {}  # {cluster_obj: final_db_person_obj}
+
+            for cluster in event_clusters:
+                representative_feature = pickle.loads(cluster.features[0].feature)
+                db_match = find_best_match_in_gallery(representative_feature, static_persons_gallery)
+
+                if db_match:
+                    final_person_map[cluster] = db_match
+                else:
+                    db.add(cluster)
+                    final_person_map[cluster] = cluster
+
+            unique_persons_in_event = set(final_person_map.values())
+
+            for cluster, final_person in final_person_map.items():
+                if final_person != cluster:
+                    for feature_obj in cluster.features:
+                        final_person.features.append(feature_obj)  # type: ignore
+
+                if final_person in static_persons_gallery:
+                    final_person.sighting_count += 1
+
+            if event_clusters:
+                first_cluster = event_clusters[0]
+                first_person_obj = final_person_map[first_cluster]
+                db.flush()
+                event_person_id_val = first_person_obj.id
+
+            db.commit()
+            logging.info(f"[資料庫] 成功提交 Re-ID 處理結果。本次事件涉及 {len(unique_persons_in_event)} 個獨立人物。")
 
         except Exception as e:
-            logging.error(f"[特徵處理] 處理 Re-ID 特徵時發生錯誤: {e}", exc_info=True)
+            logging.error(f"[特徵處理] 處理 Re-ID 特徵時發生嚴重錯誤，交易已回滾: {e}", exc_info=True)
+            db.rollback()
+            event_person_id_val = None
+        finally:
+            db.close()
 
     if process.returncode != 0:
         logging.error(f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {process.returncode}")
@@ -278,7 +333,7 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
                 video_path=save_path,
                 event_type="person_detected",
                 status="unreviewed",
-                person_id=person_id_for_event
+                person_id=event_person_id_val
             )
             db.add(new_event)
             db.commit()
@@ -297,3 +352,6 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
             f"影片: {Config.ENCODE_HEIGHT}p @ {actual_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS"
         )
         notifier_instance.schedule_notification(notification_message, file_path=save_path)
+
+
+
