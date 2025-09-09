@@ -1,4 +1,4 @@
-# components/reid_utils.py
+# utils/reid_utils.py
 import numpy as np
 from numpy.typing import NDArray
 
