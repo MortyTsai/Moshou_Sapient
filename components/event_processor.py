@@ -5,7 +5,6 @@ import threading
 import logging
 import subprocess
 import os
-import pickle
 from collections import deque
 from queue import Empty, Queue
 from datetime import datetime
@@ -15,7 +14,6 @@ from config import Config
 from database import SessionLocal
 from models import Event
 from utils.reid_utils import find_or_create_person
-
 
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):
@@ -28,7 +26,7 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
     reid_interval = 5
 
     latency_buffer, det_time_buffer, track_time_buffer, reid_time_buffer = [], [], [], []
-    logging_interval_frames = 30
+    logging_interval_frames = 60
 
     while not stop_event.is_set():
         try:
@@ -185,7 +183,6 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
     logging.info("消費者: 執行緒已停止。")
 
 
-
 def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float, reid_features_list: list):
     """
     影片編碼執行緒: 使用 FFmpeg (NVENC) 硬體編碼, 處理 Re-ID 特徵, 儲存事件紀錄, 並透過 Notifier 發送。
@@ -224,7 +221,6 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
 
             for d in tracked_objects:
                 x1, y1, x2, y2, track_id = d[:5]
-
                 x1_s, y1_s = int(x1 * scale_x), int(y1 * scale_y)
                 x2_s, y2_s = int(x2 * scale_x), int(y2 * scale_y)
                 track_id = int(track_id)
@@ -251,14 +247,23 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     logging.info(f"[GPU 編碼器] FFmpeg 硬體編碼耗時: {encoding_duration:.2f} 秒。")
     logging.info(f"[GPU 編碼器] ===> 實際平均編碼幀率: {encoding_fps:.2f} FPS <===")
 
-    serialized_features = None
-    mean_feature = None
+    person_id_for_event = None
     if reid_features_list:
         try:
-            features_np = np.array(reid_features_list)
-            mean_feature = np.mean(features_np, axis=0)
-            serialized_features = pickle.dumps(mean_feature)
-            logging.info(f"[特徵處理] 已成功將 {len(reid_features_list)} 個特徵向量聚合成一個平均特徵。")
+            representative_feature = reid_features_list[0]
+            logging.info(f"[特徵處理] 從 {len(reid_features_list)} 個特徵中選取第 1 個進行 Re-ID。")
+
+            db = SessionLocal()
+            try:
+                person_id, is_new = find_or_create_person(db, representative_feature)
+                person_id_for_event = person_id
+                if is_new:
+                    logging.info(f"[Re-ID] 發現新的人物! 已在全域畫廊中建立永久 ID: {person_id}")
+                else:
+                    logging.info(f"[Re-ID] 識別出已知人物。匹配到永久 ID: {person_id}")
+            finally:
+                db.close()
+
         except Exception as e:
             logging.error(f"[特徵處理] 處理 Re-ID 特徵時發生錯誤: {e}", exc_info=True)
 
@@ -269,19 +274,10 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
         logging.info(f"[資訊] 事件影片已儲存至: {save_path}")
         db = SessionLocal()
         try:
-            person_id_for_event = None
-            if mean_feature is not None:
-                person_id, is_new = find_or_create_person(db, mean_feature)
-                person_id_for_event = person_id
-                if is_new:
-                    logging.info(f"[Re-ID] 發現新的人物！已在全域畫廊中建立永久 ID: {person_id}")
-                else:
-                    logging.info(f"[Re-ID] 識別出已知人物。匹配到永久 ID: {person_id}")
             new_event = Event(
                 video_path=save_path,
                 event_type="person_detected",
                 status="unreviewed",
-                reid_features=serialized_features,
                 person_id=person_id_for_event
             )
             db.add(new_event)
