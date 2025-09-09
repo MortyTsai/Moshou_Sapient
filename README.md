@@ -18,7 +18,7 @@
 -   **穩定的物件追蹤**: 採用 **BOTSORT** 追蹤器，並將偵測與特徵提取流程解耦，手動管理追蹤器生命週期，提升管線的穩定性與可控性。
 -   **長時人物重識別 (Long-Term Re-ID)**:
     -   **特徵集畫廊 (Gallery of Feature Sets)**: 建立「全域人物畫廊」資料庫，為每個人物維護一個由多個特徵向量組成的集合，而非單一代表性特徵。
-    -   **魯棒的匹配邏輯**: 採用「一對多」的比對策略，將新觀測到的特徵與畫廊中的整個特徵集進行比較，極大提升了在姿態、光照變化下的識別準確率。
+    -   **魯棒的匹配邏輯**: 採用「穩定代表元聚類」演算法，能準確地在單一複雜事件中區分多個獨立人物，並透過「全域校準」將其與歷史資料庫進行比對，極大提升了在姿態、光照變化下的識別準確率。
 -   **事件驅動的特徵持久化**: 系統能在偵測到人物時觸發事件，並提取 Re-ID 特徵向量，使用 SQLAlchemy ORM 與 SQLite (WAL 模式) 將其與事件元數據一同高效存入資料庫。
 -   **模組化架構**: 以 `CameraWorker` 類別封裝單一攝影機的處理邏輯 (影像擷取、AI處理、事件錄影)，具備良好的可擴展性。
 -   **遠端存取與可選通知**:
@@ -139,9 +139,9 @@ MoshouSapient/
 
     # RTSP 模式所需憑證
     # 請在此填入您攝影機的完整 RTSP URL。
-    # 範例 1 (Tapo): rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1
+    # 範例 1 (Tapo): rtsp://YourCameraUsername:YourCameraPassword @YourCameraIPAddress:554/stream1
     # 範例 2 (某些其他品牌): rtsp://YourCameraIPAddress:554/user=YourCameraUsername_password=YourCameraPassword_channel=1_stream=0.sdp
-    RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
+    RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword @YourCameraIPAddress:554/stream1"
 
     # FILE 模式所需路徑
     VIDEO_FILE_PATH="videos/input.mp4"
