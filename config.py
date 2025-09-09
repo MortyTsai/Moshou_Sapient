@@ -22,11 +22,7 @@ class Config:
     DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID")) if os.getenv("DISCORD_CHANNEL_ID") else None
 
     # Camera
-    CAM_IP = os.getenv("CAM_IP")
-    CAM_USER = os.getenv("CAM_USER")
-    CAM_PASS = os.getenv("CAM_PASS")
-    RTSP_URL_HIGH_RES = f"rtsp://{CAM_USER}:{CAM_PASS}@{CAM_IP}:554/stream1" if all(
-        [CAM_USER, CAM_PASS, CAM_IP]) else None
+    RTSP_URL = os.getenv("RTSP_URL")
 
     # 專案核心設定
     CAPTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "captures")
