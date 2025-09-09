@@ -17,6 +17,7 @@ class Config:
     VIDEO_FILE_PATH = os.getenv("VIDEO_FILE_PATH")
 
     # Discord Bot
+    DISCORD_ENABLED = os.getenv("DISCORD_ENABLED", "False").lower() == "true"
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
     DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID")) if os.getenv("DISCORD_CHANNEL_ID") else None
 
