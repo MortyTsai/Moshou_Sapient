@@ -14,13 +14,13 @@ from ultralytics import YOLO
 from config import Config
 from database import SessionLocal
 from models import Event
+from utils.reid_utils import find_or_create_person
 
 
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):
     """
-    AI 推論執行緒 (v7.4 - Re-ID 節流優化修正版):
-    (此函式內容保持不變)
+    AI 推論執行緒
     """
     logging.info("推論器: 執行緒已啟動, 使用 GPU。")
 
@@ -123,7 +123,7 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
     event_recording, current_event_features = [], []
 
     debug_log_counter = 0
-    DEBUG_LOG_INTERVAL = 30
+    DEBUG_LOG_INTERVAL = 60
 
     while not stop_event.is_set():
         try:
@@ -189,7 +189,6 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
 def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float, reid_features_list: list):
     """
     影片編碼執行緒: 使用 FFmpeg (NVENC) 硬體編碼, 處理 Re-ID 特徵, 儲存事件紀錄, 並透過 Notifier 發送。
-    (此函式內容保持不變)
     """
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS, 取消編碼。")
@@ -253,6 +252,7 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     logging.info(f"[GPU 編碼器] ===> 實際平均編碼幀率: {encoding_fps:.2f} FPS <===")
 
     serialized_features = None
+    mean_feature = None
     if reid_features_list:
         try:
             features_np = np.array(reid_features_list)
@@ -269,11 +269,20 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
         logging.info(f"[資訊] 事件影片已儲存至: {save_path}")
         db = SessionLocal()
         try:
+            person_id_for_event = None
+            if mean_feature is not None:
+                person_id, is_new = find_or_create_person(db, mean_feature)
+                person_id_for_event = person_id
+                if is_new:
+                    logging.info(f"[Re-ID] 發現新的人物！已在全域畫廊中建立永久 ID: {person_id}")
+                else:
+                    logging.info(f"[Re-ID] 識別出已知人物。匹配到永久 ID: {person_id}")
             new_event = Event(
                 video_path=save_path,
                 event_type="person_detected",
                 status="unreviewed",
-                reid_features=serialized_features
+                reid_features=serialized_features,
+                person_id=person_id_for_event
             )
             db.add(new_event)
             db.commit()
