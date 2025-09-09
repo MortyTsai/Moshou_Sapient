@@ -7,7 +7,6 @@ import os
 from ultralytics import YOLO
 import numpy as np
 from typing import Optional, Dict, Any
-
 from config import Config
 from logging_setup import setup_logging
 from components.camera_worker import CameraWorker
@@ -50,10 +49,10 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
 
     elif Config.VIDEO_SOURCE_TYPE == "RTSP":
         logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
-        if not Config.RTSP_URL_HIGH_RES:
-            logging.critical("[嚴重錯誤] 未設定攝影機憑證，請檢查 .env 檔案中的 CAM_* 變數。")
+        if not Config.RTSP_URL:
+            logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
             return None
-        source_uri = Config.RTSP_URL_HIGH_RES
+        source_uri = Config.RTSP_URL
         source_name = "RTSP-Cam"
 
     else:
