@@ -16,13 +16,14 @@
 
 -   **高效能推論管線**: 整合 **YOLO11s** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
 -   **穩定的物件追蹤**: 採用 **BOTSORT** 追蹤器，並將偵測與特徵提取流程解耦，手動管理追蹤器生命週期，提升管線的穩定性與可控性。
--   **長時人物重識別 (Long-Term Re-ID)**: 建立「全域人物畫廊」資料庫，能夠識別在不同時間（數分鐘甚至數小時後）重新出現的同一個人，並賦予其穩定的永久 ID。
+-   **長時人物重識別 (Long-Term Re-ID)**:
+    -   **特徵集畫廊 (Gallery of Feature Sets)**: 建立「全域人物畫廊」資料庫，為每個人物維護一個由多個特徵向量組成的集合，而非單一代表性特徵。
+    -   **魯棒的匹配邏輯**: 採用「一對多」的比對策略，將新觀測到的特徵與畫廊中的整個特徵集進行比較，極大提升了在姿態、光照變化下的識別準確率。
 -   **事件驅動的特徵持久化**: 系統能在偵測到人物時觸發事件，並提取 Re-ID 特徵向量，使用 SQLAlchemy ORM 與 SQLite (WAL 模式) 將其與事件元數據一同高效存入資料庫。
--   **即時性能調優**: 透過對處理管線的延遲分析，實施了 **Re-ID 節流 (Throttling)** 策略，有效將事件處理的端到端延遲控制在即時預算內，確保追蹤器穩定運作。
 -   **模組化架構**: 以 `CameraWorker` 類別封裝單一攝影機的處理邏輯 (影像擷取、AI處理、事件錄影)，具備良好的可擴展性。
--   **遠端存取與通知**:
+-   **遠端存取與可選通知**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
-    -   透過 **Discord Bot** 非同步推送即時警報訊息與事件影片。
+    -   透過 **Discord Bot** 非同步推送即時警報，此功能可透過設定檔完全啟用或禁用。
 
 ## 技術棧
 
@@ -38,15 +39,15 @@
 ```
 MoshouSapient/
 │
-├── .env # 環境變數設定檔 (需手動建立)
+├── .env.example # 環境變數設定檔範本
 ├── .gitignore # Git 版本控制忽略清單
-├── config.py # 中央設定檔，管理所有參數與環境 Variablen
+├── config.py # 中央設定檔，管理所有參數與環境變數
 ├── custom_botsort.yaml # BoT-SORT 追蹤器客製化參數
 ├── database.py # SQLAlchemy 資料庫初始化與 Session 管理
 ├── export_tensorrt.py # YOLO 模型轉換為 TensorRT 引擎的腳本
 ├── logging_setup.py # 全域日誌 (Logging) 設定模組
 ├── main.py # 專案主程式入口
-├── models.py # 資料庫 ORM 模型定義 (Event, Person 表)
+├── models.py # 資料庫 ORM 模型定義 (Event, Person, PersonFeature)
 ├── requirements.txt # Python 依賴套件列表
 ├── web_dashboard.py # Flask Web 應用程式與路由定義
 ├── yolo11s.engine # (生成) TensorRT 格式的偵測模型
@@ -61,7 +62,7 @@ MoshouSapient/
 │ └── video_streamer.py # 使用 FFmpeg 進行影像流讀取的生產者模組
 │
 ├── utils/ # 通用工具函式
-│ ├── reid_utils.py # Re-ID 相關工具函式 (例如餘弦相似度計算)
+│ ├── reid_utils.py # Re-ID 相關工具函式 (畫廊比對邏輯)
 │ └── video_utils.py # 影片元數據讀取工具
 │
 ├── templates/ # Web 儀表板的 HTML 樣板
@@ -106,10 +107,7 @@ MoshouSapient/
     # 例如 CUDA 12.x:
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu12x
 
-    # 2. 安裝 TensorRT Python wheel 檔案 (請務必替換為您自己的實際路徑)
-    # pip install "C:\Path\To\Your\TensorRT-version\python\tensorrt-version.whl"
-
-    # 3. 安裝其餘依賴
+    # 2. 安裝其餘依賴
     pip install -r requirements.txt
     ```
 
@@ -124,34 +122,29 @@ MoshouSapient/
 ## 專案設定與執行
 
 1.  **設定環境變數**:
-    在專案根目錄下建立一個 `.env` 檔案。根據您要執行的模式，填入對應的憑證：
+    在專案根目錄下，將 `.env.example` 複製一份並重新命名為 `.env`。然後根據您的需求填寫設定：
 
-    **模式一: RTSP 即時串流**
     ```env
     # .env
-    VIDEO_SOURCE_TYPE="RTSP"
+    
+    # Discord Bot 功能總開關 (True/False)
+    DISCORD_ENABLED=False
 
-    # Discord Bot Credentials
+    # Discord Bot Credentials (僅在 DISCORD_ENABLED=True 時需要)
     DISCORD_TOKEN="YourDiscordBotTokenHere"
     DISCORD_CHANNEL_ID="YourChannelIDHere"
 
-    # Camera Credentials
+    # 影像來源類型: "RTSP" 或 "FILE"
+    VIDEO_SOURCE_TYPE="RTSP"
+
+    # RTSP 模式所需憑證
     CAM_IP="YourCameraIPAddress"
     CAM_USER="YourCameraUsername"
     CAM_PASS="YourCameraPassword"
-    ```
 
-    **模式二: 本地檔案處理**
-    ```env
-    # .env
-    VIDEO_SOURCE_TYPE="FILE"
-    VIDEO_FILE_PATH="videos/your_test_video.mp4" # <-- 請確保路徑與檔名正確
-
-    # Discord Bot Credentials
-    DISCORD_TOKEN="YourDiscordBotTokenHere"
-    DISCORD_CHANNEL_ID="YourChannelIDHere"
+    # FILE 模式所需路徑
+    VIDEO_FILE_PATH="videos/your_test_video.mp4"
     ```
-    *注意: 在 `FILE` 模式下，`CAM_*` 相關變數將被忽略。*
 
 2.  **微調追蹤器 (可選)**:
     專案包含 `custom_botsort.yaml` 檔案，您可以在其中微調追蹤演算法的相關參數。
@@ -164,16 +157,17 @@ MoshouSapient/
 4.  **驗證**:
     -   打開瀏覽器，訪問 Web 儀表板： `http://127.0.0.1:5000`
     -   觸發事件（例如，讓人物出現在攝影機畫面中，或使用包含人物的影片檔案）。
-    -   檢查 Discord 是否收到通知，以及 Web 儀表板是否出現新的事件紀錄。
+    -   如果啟用了 Discord，檢查是否收到通知。
+    -   檢查 Web 儀表板是否出現新的事件紀錄。
 
 ## 未來可能的發展方向
 
 作為一個學習與探索性質的專案，以下是一些未來可能的研究與開發方向。這些並非確定的開發計畫，而是基於現有架構的潛在擴展思路：
 
--   **進階 Re-ID 策略**: 探索從「單一代表性特徵」升級為「特徵集畫廊」，以提升在複雜場景（姿態、光照變化、遮擋）下的識別魯棒性。
--   **進階資料庫查詢**: 探索基於 Re-ID 特徵向量的相似度搜尋，以實現特定人物的歷史事件檢索。
+-   **行為分析與異常偵測**: 在穩定的長時 Re-ID 基礎上，開發更高層級的分析模組，例如判斷特定目標是否在某區域停留過久、是否跨越虛擬警戒線等。
+-   **進階資料庫查詢**: 探索基於 Re-ID 特徵向量的相似度搜尋，以實現特定人物的歷史事件檢索（例如「顯示這個人今天所有出現過的片段」）。
 -   **前端介面強化**: 擴充 Web 儀表板功能，例如增加事件篩選、排序，或引入更豐富的數據視覺化圖表。
--   **多攝影機支援**: 將現有的單攝影機 `CameraWorker` 架構擴展，使其能夠由一個主程序同時管理多個獨立的攝影機影像來源。
+-   **多攝影機協同**: 將現有的單攝影機 `CameraWorker` 架構擴展，使其能夠由一個主程序同時管理多個獨立的攝影機，並利用特徵集畫廊實現跨攝影機的目標重識別。
 -   **模型管理與抽象化**: 將模型載入與設定的邏輯抽象化，讓使用者可以更容易地透過設定檔替換不同的偵測或 Re-ID 模型。
 
 ## 開發模式說明
