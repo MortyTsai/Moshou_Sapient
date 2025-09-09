@@ -20,13 +20,7 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):
     """
     AI 推論執行緒 (v7.4 - Re-ID 節流優化修正版):
-    1. 從佇列中獲取影像。
-    2. 使用主模型進行物件偵測。
-    3. 將偵測結果手動餵給獨立的追蹤器物件。
-    4. 根據節流閥邏輯，切割追蹤到的目標。
-    5. 使用 Re-ID 模型獨立提取外觀特徵。
-    6. 更新共享狀態。
-    7. 計算並週期性地記錄延遲統計摘要。
+    (此函式內容保持不變)
     """
     logging.info("推論器: 執行緒已啟動, 使用 GPU。")
 
@@ -120,91 +114,82 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
 
     logging.info("推論器: 執行緒已停止。")
 
-
 def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
-                   notifier, lock: threading.Lock):
-    """
-    消費者執行緒: 處理事件邏輯、觸發錄影, 並啟動編碼執行緒。
-    """
+                   notifier, lock: threading.Lock, active_recorders: list):
     logging.info("消費者: 執行緒已啟動。")
-
-    is_capturing_event = False
-    last_person_seen_time = 0
-    last_event_ended_time = 0
-
+    is_capturing_event, last_person_seen_time, last_event_ended_time = False, 0, 0
     buffer_size = int(Config.PRE_EVENT_SECONDS * Config.TARGET_FPS * 1.5)
     frame_buffer = deque(maxlen=buffer_size)
+    event_recording, current_event_features = [], []
 
-    event_recording = []
-    current_event_features = []
+    debug_log_counter = 0
+    DEBUG_LOG_INTERVAL = 30
 
     while not stop_event.is_set():
         try:
             item = frame_queue.get(timeout=1)
             current_time = item['time']
+            debug_log_counter += 1
 
             with lock:
                 person_detected_now = shared_state.get('person_detected', False)
-                tracked_objects_now = shared_state.get('tracked_objects', np.empty((0, 5)))
+                num_tracks = len(shared_state.get('tracked_objects', []))
                 reid_features_map_now = shared_state.get('reid_features_map', {})
 
-            frame_data = {
-                'frame': item['frame'],
-                'time': current_time,
-                'tracks': tracked_objects_now
-            }
+            if debug_log_counter % DEBUG_LOG_INTERVAL == 0:
+                logging.info(f"[消費者-偵錯] person_detected: {person_detected_now}, num_tracks: {num_tracks}, is_capturing: {is_capturing_event}")
 
+            frame_data = {'frame': item['frame'], 'time': current_time, 'tracks': shared_state.get('tracked_objects', np.empty((0, 5)))}
             if is_capturing_event:
                 event_recording.append(frame_data)
-                if reid_features_map_now:
-                    current_event_features.extend(reid_features_map_now.values())
+                if reid_features_map_now: current_event_features.extend(reid_features_map_now.values())
             else:
                 frame_buffer.append(frame_data)
-
             if person_detected_now:
                 last_person_seen_time = current_time
-
             if person_detected_now and not is_capturing_event:
                 if current_time - last_event_ended_time > Config.COOLDOWN_PERIOD:
                     logging.info(">>> [消費者] 偵測到人物! 觸發事件錄製... <<<")
                     is_capturing_event = True
                     event_recording = list(frame_buffer)
-
                     current_event_features.clear()
-                    if reid_features_map_now:
-                        current_event_features.extend(reid_features_map_now.values())
-
+                    if reid_features_map_now: current_event_features.extend(reid_features_map_now.values())
             if is_capturing_event and (current_time - last_person_seen_time > Config.POST_EVENT_SECONDS):
                 logging.info("[消費者] 事件後續幀捕捉完成。")
                 if len(event_recording) > 1:
                     duration = event_recording[-1]['time'] - event_recording[0]['time']
                     actual_fps = len(event_recording) / duration if duration > 0 else Config.TARGET_FPS
-
-                    encoding_thread = threading.Thread(
-                        target=encode_and_send_video,
-                        name="EncodingThread",
-                        args=(list(event_recording), notifier, actual_fps, list(current_event_features))
-                    )
+                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread", args=(list(event_recording), notifier, actual_fps, list(current_event_features)))
+                    active_recorders.append(encoding_thread)
                     encoding_thread.start()
-
                 is_capturing_event, event_recording = False, []
                 current_event_features.clear()
                 last_event_ended_time = current_time
-
-                with lock:
-                    shared_state['event_ended'] = True
-
+                with lock: shared_state['event_ended'] = True
         except Empty:
+            if is_capturing_event:
+                logging.info("[消費者] 佇列為空，結束當前事件錄製。")
+                if len(event_recording) > 1:
+                    duration = event_recording[-1]['time'] - event_recording[0]['time']
+                    actual_fps = len(event_recording) / duration if duration > 0 else Config.TARGET_FPS
+                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread", args=(list(event_recording), notifier, actual_fps, list(current_event_features)))
+                    active_recorders.append(encoding_thread)
+                    encoding_thread.start()
+                is_capturing_event, event_recording = False, []
+                current_event_features.clear()
+                last_event_ended_time = time.time()
+                with lock: shared_state['event_ended'] = True
             continue
         except Exception as e:
             logging.error(f"消費者: 執行緒發生錯誤: {e}", exc_info=True)
-
     logging.info("消費者: 執行緒已停止。")
+
 
 
 def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float, reid_features_list: list):
     """
     影片編碼執行緒: 使用 FFmpeg (NVENC) 硬體編碼, 處理 Re-ID 特徵, 儲存事件紀錄, 並透過 Notifier 發送。
+    (此函式內容保持不變)
     """
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS, 取消編碼。")
