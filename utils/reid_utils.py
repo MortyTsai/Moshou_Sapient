@@ -2,11 +2,9 @@
 import numpy as np
 from numpy.typing import NDArray
 import pickle
-from sqlalchemy.orm import Session, selectinload
-from models import Person, PersonFeature
-
-PERSON_MATCH_THRESHOLD = 0.65
-
+from models import Person
+from typing import Optional
+from config import Config
 
 def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
     """計算兩個 NumPy 特徵向量之間的餘弦相似度。"""
@@ -24,54 +22,30 @@ def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
     return similarity
 
 
-def find_or_create_person(db: Session, new_feature: NDArray) -> tuple[int, bool]:
+def find_best_match_in_gallery(new_feature: NDArray, gallery: list[Person]) -> Optional[Person]:
     """
-    在人物畫廊中尋找匹配的個體。
-    比對邏輯升級為：將新特徵與每個 Person 的特徵集 (gallery) 進行一對多比對。
-    如果找到匹配，則將新特徵加入該 Person 的畫廊中。
-    如果找不到，則建立一個新的 Person。
+    在給定的畫廊(候選人列表)中，為新特徵尋找最佳匹配。
     """
-    all_persons = db.query(Person).options(selectinload(Person.features)).all()
+    # ... (The logic of find_best_match remains exactly the same) ...
+    best_match_person = None
+    highest_overall_similarity = -1.0
 
-    best_match_person_id = -1
-    highest_similarity = -1.0
-
-    for person in all_persons:
+    for person in gallery:
         if not person.features:
             continue
 
-        person_id = person.id
+        max_similarity_for_this_person = -1.0
         for existing_feature_obj in person.features:
             existing_feature = pickle.loads(existing_feature_obj.feature)
             similarity = cosine_similarity(new_feature, existing_feature)
+            if similarity > max_similarity_for_this_person:
+                max_similarity_for_this_person = similarity
 
-            if similarity > highest_similarity:
-                highest_similarity = similarity
-                best_match_person_id = person_id
+        if max_similarity_for_this_person > highest_overall_similarity:
+            highest_overall_similarity = max_similarity_for_this_person
+            best_match_person = person
 
-    if highest_similarity >= PERSON_MATCH_THRESHOLD:
-        matched_person = db.query(Person).filter(Person.id == best_match_person_id).one()
+    if highest_overall_similarity >= Config.PERSON_MATCH_THRESHOLD and best_match_person:
+        return best_match_person
 
-        new_feature_to_add = PersonFeature(
-            feature=pickle.dumps(new_feature),
-            person_id=matched_person.id
-        )
-        db.add(new_feature_to_add)
-
-        matched_person.sighting_count += 1
-        db.flush()
-        db.commit()
-
-        return matched_person.id, False  # type: ignore
-
-    else:
-        serialized_feature = pickle.dumps(new_feature)
-
-        new_person = Person()
-        new_person.features.append(PersonFeature(feature=serialized_feature))
-
-        db.add(new_person)
-        db.commit()
-        db.refresh(new_person)
-
-        return new_person.id, True  # type: ignore
+    return None
