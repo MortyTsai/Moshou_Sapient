@@ -29,7 +29,7 @@ class Config:
     MODEL_PATH = 'yolo11s.engine'
 
     # Re-ID 相關參數
-    PERSON_MATCH_THRESHOLD = 0.92
+    PERSON_MATCH_THRESHOLD = 0.95
 
     # 事件錄影參數
     PRE_EVENT_SECONDS = 2.0
