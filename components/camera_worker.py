@@ -77,7 +77,7 @@ class CameraWorker:
         logging.info(f"[{self.name}] 所有執行緒已啟動, 系統現已全面運作。")
 
     def stop(self):
-        logging.info(f"\n[{self.name}] 正在關閉...")
+        logging.info(f"[{self.name}] 正在關閉...")
         self.stop_event.set()
         if self.video_streamer:
             self.video_streamer.stop()
