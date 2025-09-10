@@ -10,7 +10,6 @@ from components.video_streamer import VideoStreamer
 from components.event_processor import frame_consumer, inference_worker
 from config import Config
 
-
 class CameraWorker:
     """
     封裝單一攝影機所有相關元件和執行緒的類別。
