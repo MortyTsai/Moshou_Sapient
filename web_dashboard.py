@@ -3,11 +3,9 @@ import os
 import logging
 from flask import Flask, render_template, send_from_directory
 from sqlalchemy import desc, exc
-
 from database import SessionLocal
 from models import Event
 from config import Config
-
 
 def create_flask_app():
     app = Flask(__name__)
