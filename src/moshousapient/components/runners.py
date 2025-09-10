@@ -1,20 +1,20 @@
-# runners.py
+# src/moshousapient/components/runners.py
+
 from __future__ import annotations
 import logging
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import List, TYPE_CHECKING
+
 from ..config import Config
 
 if TYPE_CHECKING:
     from src.moshousapient.components.camera_worker import CameraWorker
 
+
 class BaseRunner(ABC):
-    """
-    執行策略的抽象基礎類別。
-    定義了所有具體執行器 (Runner) 的共同介面與生命週期管理。
-    """
+    """執行策略的抽象基礎類別。"""
 
     def __init__(self, workers: List[CameraWorker], notifier):
         self.workers = workers
@@ -28,39 +28,25 @@ class BaseRunner(ABC):
 
     @abstractmethod
     def run(self):
-        """
-        【抽象方法】
-        啟動並執行主要的監控邏輯。
-        每個子類別必須實作自己獨特的監控迴圈。
-        """
+        """【抽象方法】啟動並執行主要的監控邏輯。"""
         pass
 
     def shutdown(self):
-        """
-        執行一個統一、優雅的關閉程序。
-        這個方法確保了所有 worker 和 notifier 都有機會完成它們的工作。
-        """
+        """執行一個統一、優雅的關閉程序。"""
         logging.info("[系統] 正在優雅地關閉所有服務, 請稍候...")
-
         for worker in self.workers:
             worker.stop()
-
         if self.notifier:
             self.notifier.stop()
-
         logging.info("[系統] 系統已安全關閉。")
 
 
 class RTSPRunner(BaseRunner):
-    """
-    針對 RTSP 即時串流的執行策略。
-    此模式下，系統會永久運行，直到手動中斷或發生嚴重錯誤。
-    """
+    """針對 RTSP 即時串流的執行策略。"""
 
     def run(self):
         logging.info("[系統] 進入 RTSP (永久監控) 模式。")
         self.start_workers()
-
         while not self.stop_event.is_set():
             time.sleep(Config.HEALTH_CHECK_INTERVAL)
             for worker in self.workers:
@@ -71,10 +57,7 @@ class RTSPRunner(BaseRunner):
 
 
 class FileRunner(BaseRunner):
-    """
-    針對本地檔案處理的執行策略。
-    此模式下，系統會在所有影格處理完畢後自動、優雅地關閉。
-    """
+    """針對本地檔案處理的執行策略。"""
 
     def run(self):
         logging.info(f"[系統] 進入 FILE (批次處理) 模式。等待所有 worker 完成...")
