@@ -39,57 +39,57 @@
 
 ## 系統檔案結構
 ```
-MoshouSapient/ # 專案根目錄
+## 系統檔案結構
+
+MoshouSapient/                          # 專案根目錄
 │
-├── .env.example # 環境變數設定檔範本
-├── .gitignore # Git 版本控制忽略清單
-├── README.md # 專案說明文件
-├── requirements.txt # Python 依賴套件列表
+├── .env.example                        # 環境變數設定檔範本
+├── .gitignore                          # Git 版本控制忽略清單
+├── README.md                           # 專案說明文件
+├── requirements.txt                    # Python 依賴套件列表
 │
-├── configs/ # 存放所有靜態設定檔
-│ └── custom_botsort.yaml # BoT-SORT 追蹤器客製化參數
+├── configs/                            # 存放所有靜態設定檔
+│   └── custom_botsort.yaml             # BoT-SORT 追蹤器客製化參數
 │
-├── data/ # (動態生成) 存放執行時資料
-│ ├── captures/ # (動態生成) 存放事件錄影
-│ └── security_events.db # (動態生成) SQLite 資料庫檔案
+├── data/                               # (動態生成) 存放執行時資料 (如資料庫)
 │
-├── models/ # 存放所有 AI 模型資產
-│ ├── yolo11s.pt # (需下載) PyTorch 格式的偵測模型
-│ ├── yolo11s-cls.pt # (需下載) PyTorch 格式的 Re-ID 模型
-│ └── yolo11s.engine # (動態生成) TensorRT 格式的偵測模型
+├── models/                             # 存放所有 AI 模型資產
+│   ├── yolo11s.pt                      # (需下載) PyTorch 格式的偵測模型
+│   ├── yolo11s-cls.pt                  # (需下載) PyTorch 格式的 Re-ID 模型
+│   └── yolo11s.engine                  # (動態生成) TensorRT 格式的偵測模型
 │
-├── scripts/ # 存放輔助開發腳本
-│ └── export_tensorrt.py # 模型轉換為 TensorRT 引擎的腳本
+├── scripts/                            # 存放輔助開發腳本
+│   └── export_tensorrt.py              # 模型轉換為 TensorRT 引擎的腳本
 │
-└── src/ # 存放所有專案原始碼
-└── moshousapient/ # 專案主 Python 套件
-├── init.py # 將目錄標記為 Python 套件
-├── main.py # 套件執行入口 (python -m moshousapient)
-│
-├── components/ # 核心功能元件子套件
-│ ├── init.py # 將目錄標記為 Python 子套件
-│ ├── camera_worker.py # 管理單一攝影機的核心類別
-│ ├── discord_notifier.py # Discord Bot 通知模組
-│ ├── event_processor.py # 核心 AI 處理管線 (偵測、追蹤、Re-ID、行為分析)
-│ ├── runners.py # 執行策略模組 (RTSP/File 模式)
-│ └── video_streamer.py # FFmpeg 影像流讀取模組
-│
-├── utils/ # 通用工具函式子套件
-│ ├── init.py # 將目錄標記為 Python 子套件
-│ ├── reid_utils.py # Re-ID 相關工具函式
-│ └── video_utils.py # 影片元數據讀取工具
-│
-├── web/ # Web 儀表板子套件
-│ ├── init.py # 將目錄標記為 Python 子套件
-│ ├── app.py # Flask 應用程式與路由定義
-│ └── templates/ # Web 儀表板的 HTML 樣板
-│ └── index.html # 儀表板主頁面樣板
-│
-├── config.py # 中央設定類別與路徑管理
-├── database.py # SQLAlchemy 資料庫初始化與 Session 管理
-├── logging_setup.py # 全域日誌 (Logging) 設定模組
-├── main.py # 專案主程式邏輯
-└── models.py # 資料庫 ORM 模型定義
+└── src/                                # 存放所有專案原始碼
+    └── moshousapient/                  # 專案主 Python 套件
+        ├── __init__.py                 # 將目錄標記為 Python 套件
+        ├── __main__.py                 # 套件執行入口 (python -m moshousapient)
+        │
+        ├── components/                 # 核心功能元件子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── camera_worker.py        # 管理單一攝影機的核心類別
+        │   ├── discord_notifier.py     # Discord Bot 通知模組
+        │   ├── event_processor.py      # 核心 AI 處理管線 (偵測、追蹤、Re-ID、行為分析)
+        │   ├── runners.py              # 執行策略模組 (RTSP/File 模式)
+        │   └── video_streamer.py       # FFmpeg 影像流讀取模組
+        │
+        ├── utils/                      # 通用工具函式子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── reid_utils.py           # Re-ID 相關工具函式
+        │   └── video_utils.py          # 影片元數據讀取工具
+        │
+        ├── web/                        # Web 儀表板子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── app.py                  # Flask 應用程式與路由定義
+        │   └── templates/              # Web 儀表板的 HTML 樣板
+        │       └── index.html          # 儀表板主頁面樣板
+        │
+        ├── config.py                   # 中央設定類別與路徑管理
+        ├── database.py                 # SQLAlchemy 資料庫初始化與 Session 管理
+        ├── logging_setup.py            # 全域日誌 (Logging) 設定模組
+        ├── main.py                     # 專案主程式邏輯
+        └── models.py                   # 資料庫 ORM 模型定義
 ```
 
 ## 環境準備
