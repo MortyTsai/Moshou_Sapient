@@ -75,6 +75,8 @@ def main():
     Config.ensure_captures_dir_exists()
     init_db()
 
+    Config.initialize_dynamic_settings()
+
     # 2. 載入模型
     logging.info(f"[YOLO] 正在從 {Config.MODEL_PATH} 載入 TensorRT 模型...")
     try:
