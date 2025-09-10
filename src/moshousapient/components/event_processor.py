@@ -296,11 +296,8 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
                 if db_match:
                     final_person_map[cluster] = db_match
                 else:
-                    # 這是一個新人物 (在資料庫和本次事件中都未曾見過)
                     db.add(cluster)
                     final_person_map[cluster] = cluster
-                    # ▼▼▼ 關鍵修正：將這個新發現的人物立即加入畫廊 ▼▼▼
-                    # 這樣，本次事件中的下一個 cluster 就能夠與他進行比對了。
                     static_persons_gallery.append(cluster)
 
             unique_persons_in_event = set(final_person_map.values())
