@@ -1,4 +1,4 @@
-# utils/video_utils.py
+# video_utils.py
 import subprocess
 import json
 import logging

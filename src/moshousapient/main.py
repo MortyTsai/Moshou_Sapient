@@ -7,13 +7,13 @@ import os
 from ultralytics import YOLO
 import numpy as np
 from typing import Optional, Dict, Any
-from config import Config
-from logging_setup import setup_logging
-from components.camera_worker import CameraWorker
-from components.discord_notifier import DiscordNotifier
-from database import init_db
-from web_dashboard import create_flask_app
-from components.runners import RTSPRunner, FileRunner, BaseRunner
+from .config import Config
+from .logging_setup import setup_logging
+from .database import init_db
+from .web.app import create_flask_app
+from .components.camera_worker import CameraWorker
+from .components.discord_notifier import DiscordNotifier
+from .components.runners import RTSPRunner, FileRunner, BaseRunner
 
 def pre_flight_checks():
     """
@@ -84,9 +84,8 @@ def main():
         warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False)
         logging.info("[YOLO] TensorRT 模型已成功載入並預熱。")
-
-        logging.info("[Re-ID] 正在載入 yolo11s-cls.pt 作為特徵提取器...")
-        reid_model = YOLO('yolo11s-cls.pt')
+        logging.info(f"[Re-ID] 正在載入 {Config.REID_MODEL_PATH} 作為特徵提取器...")
+        reid_model = YOLO(Config.REID_MODEL_PATH)
         reid_model.predict(warmup_frame, device=0, verbose=False)
         logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
 

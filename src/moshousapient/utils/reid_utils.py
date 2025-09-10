@@ -1,10 +1,10 @@
-# utils/reid_utils.py
+# reid_utils.py
 import numpy as np
 from numpy.typing import NDArray
 import pickle
-from models import Person
+from ..models import Person
+from ..config import Config
 from typing import Optional
-from config import Config
 
 def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
     """計算兩個 NumPy 特徵向量之間的餘弦相似度。"""

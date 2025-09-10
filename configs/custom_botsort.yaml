@@ -12,7 +12,7 @@ gmc_method: sparseOptFlow
 
 # --- 為增強 Re-ID 穩定性而進行的參數覆寫 ---
 with_reid: True               # <-- 啟用 Re-ID 模組
-model: yolo11s-cls.pt         # <-- 選擇 Re-ID 模型
+model: models/yolo11s-cls.pt  # <-- 選擇 Re-ID 模型
 track_high_thresh: 0.4        # <-- 首次關聯閾值
 new_track_thresh: 0.45        # <-- 新軌跡建立閾值
 track_buffer: 70              # <-- 軌跡緩衝區

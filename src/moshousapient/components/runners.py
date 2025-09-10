@@ -1,15 +1,14 @@
-# components/runners.py
+# runners.py
 from __future__ import annotations
 import logging
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import List
-from config import Config
-from typing import TYPE_CHECKING
+from typing import List, TYPE_CHECKING
+from ..config import Config
 
 if TYPE_CHECKING:
-    from components.camera_worker import CameraWorker
+    from src.moshousapient.components.camera_worker import CameraWorker
 
 class BaseRunner(ABC):
     """

@@ -1,4 +1,4 @@
-# components/event_processor.py
+# event_processor.py
 import cv2
 import time
 import threading
@@ -11,11 +11,11 @@ from queue import Empty, Queue
 from datetime import datetime
 import numpy as np
 from ultralytics import YOLO
-from config import Config
-from database import SessionLocal
-from models import Event, Person, PersonFeature
+from ..config import Config
+from ..database import SessionLocal
+from ..models import Event, Person, PersonFeature
+from ..utils.reid_utils import cosine_similarity, find_best_match_in_gallery
 from sqlalchemy.orm import selectinload
-from utils.reid_utils import cosine_similarity, find_best_match_in_gallery
 
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):

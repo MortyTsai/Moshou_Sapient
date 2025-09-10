@@ -1,4 +1,4 @@
-# components/discord_notifier.py
+# discord_notifier.py
 import discord
 import asyncio
 import threading

@@ -1,4 +1,4 @@
-# components/camera_worker.py
+# camera_worker.py
 import threading
 from queue import Queue
 import logging
@@ -6,9 +6,9 @@ import yaml
 from types import SimpleNamespace
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
-from components.video_streamer import VideoStreamer
-from components.event_processor import frame_consumer, inference_worker
-from config import Config
+from .video_streamer import VideoStreamer
+from .event_processor import frame_consumer, inference_worker
+from ..config import Config
 
 class CameraWorker:
     """
@@ -24,7 +24,7 @@ class CameraWorker:
         self.name = self.config.get("name", "Camera-Default")
         self.active_recorders = []
 
-        tracker_cfg_path = "custom_botsort.yaml"
+        tracker_cfg_path = Config.TRACKER_CONFIG_PATH
         try:
             with open(tracker_cfg_path, "r", encoding="utf-8") as f:
                 cfg_dict = yaml.safe_load(f)

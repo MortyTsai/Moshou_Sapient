@@ -1,10 +1,10 @@
-# components/video_streamer.py
+# video_streamer.py
 import subprocess
 import threading
 import numpy as np
 import time
 import logging
-from config import Config
+from ..config import Config
 
 class VideoStreamer:
     """

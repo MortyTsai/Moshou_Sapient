@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List
 from sqlalchemy import DateTime, func, LargeBinary, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from database import Base
+from .database import Base
 
 
 class Event(Base):
