@@ -4,8 +4,6 @@ import asyncio
 import threading
 import os
 import logging
-from concurrent.futures import Future
-
 
 class DiscordNotifier:
     """
@@ -80,7 +78,6 @@ class DiscordNotifier:
         logging.info("[Discord] 正在優雅地關閉 Bot...")
         self._is_stopping = True
         try:
-            # 1. 等待所有已排程的通知完成
             with self._lock:
                 tasks_to_wait = list(self._pending_tasks)
 
@@ -88,20 +85,17 @@ class DiscordNotifier:
                 logging.info(f"[Discord] 等待 {len(tasks_to_wait)} 個待發送的通知完成...")
                 for future in tasks_to_wait:
                     try:
-                        future.result()  # 無限等待
+                        future.result()
                     except Exception as e:
                         logging.error(f"[Discord] 等待通知完成時發生錯誤: {e}")
                 logging.info("[Discord] 所有待發送通知已處理完畢。")
 
-            # 2. 請求 Bot 關閉
             if self.client.is_ready() and self.loop and self.loop.is_running():
                 asyncio.run_coroutine_threadsafe(self.client.close(), self.loop)
                 logging.info("[Discord] 已發送登出請求。")
 
-            # 3. 等待執行緒本身完全終止，這是最可靠的等待方式
             if self.thread and self.thread.is_alive():
                 logging.info("[Discord] 等待 Bot 執行緒完全終止...")
-                # 給予一個慷慨的總關閉時間
                 self.thread.join(timeout=30)
                 if self.thread.is_alive():
                     logging.warning("[Discord] Bot 執行緒關閉超時。")
