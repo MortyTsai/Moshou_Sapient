@@ -13,20 +13,15 @@ __pycache__/
 .env
 *.log
 
-# 執行時產生的資料庫檔案
-security_events.db
-security_events.db-shm
-security_events.db-wal
-*.sqlite3
+# 執行時產生的資料 (資料庫、日誌等)
+data/
 
 # 執行時產生的 AI 模型引擎
 *.engine
 *.onnx
-*.pt
 
 # 執行時錄製的影片
 captures/
-*.mp4
 
 # IDE/編輯器設定檔
 .idea/
