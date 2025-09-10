@@ -41,7 +41,7 @@ class BaseRunner(ABC):
         執行一個統一、優雅的關閉程序。
         這個方法確保了所有 worker 和 notifier 都有機會完成它們的工作。
         """
-        logging.info("\n[系統] 正在優雅地關閉所有服務, 請稍候...")
+        logging.info("[系統] 正在優雅地關閉所有服務, 請稍候...")
 
         for worker in self.workers:
             worker.stop()
