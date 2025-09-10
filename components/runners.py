@@ -1,5 +1,4 @@
 # components/runners.py
-
 from __future__ import annotations
 import logging
 import threading
@@ -11,7 +10,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from components.camera_worker import CameraWorker
-
 
 class BaseRunner(ABC):
     """
