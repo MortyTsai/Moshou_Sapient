@@ -284,6 +284,9 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
             logging.info(f"[特徵處理] 事件內聚類完成，發現 {len(event_clusters)} 個潛在獨立人物。")
 
             static_persons_gallery = db.query(Person).options(selectinload(Person.features)).all()
+            # ▼▼▼ 新增此行 ▼▼▼
+            initial_db_persons = set(static_persons_gallery)
+            # ▲▲▲ 新增此行 ▲▲▲
             final_person_map = {}  # {cluster_obj: final_db_person_obj}
 
             for cluster in event_clusters:
@@ -293,17 +296,23 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
                 if db_match:
                     final_person_map[cluster] = db_match
                 else:
+                    # 這是一個新人物 (在資料庫和本次事件中都未曾見過)
                     db.add(cluster)
                     final_person_map[cluster] = cluster
+                    # ▼▼▼ 關鍵修正：將這個新發現的人物立即加入畫廊 ▼▼▼
+                    # 這樣，本次事件中的下一個 cluster 就能夠與他進行比對了。
+                    static_persons_gallery.append(cluster)
 
             unique_persons_in_event = set(final_person_map.values())
 
             for cluster, final_person in final_person_map.items():
                 if final_person != cluster:
                     for feature_obj in cluster.features:
-                        final_person.features.append(feature_obj)  # type: ignore
+                        final_person.features.append(
+                            PersonFeature(feature=feature_obj.feature)
+                        )  # type: ignore
 
-                if final_person in static_persons_gallery:
+                if final_person in initial_db_persons:
                     final_person.sighting_count += 1
 
             if event_clusters:
@@ -313,7 +322,18 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
                 event_person_id_val = first_person_obj.id
 
             db.commit()
-            logging.info(f"[資料庫] 成功提交 Re-ID 處理結果。本次事件涉及 {len(unique_persons_in_event)} 個獨立人物。")
+            reidentified_persons = unique_persons_in_event.intersection(initial_db_persons)
+            new_persons = unique_persons_in_event.difference(initial_db_persons)
+
+            num_reidentified = len(reidentified_persons)
+            num_new = len(new_persons)
+
+            log_msg = (
+                f"[資料庫] 成功提交 Re-ID 處理結果。本次事件涉及 {len(unique_persons_in_event)} 個獨立人物 "
+                f"(新增 {num_new} 人, 識別 {num_reidentified} 人)。"
+            )
+            logging.info(log_msg)
+
 
         except Exception as e:
             logging.error(f"[特徵處理] 處理 Re-ID 特徵時發生嚴重錯誤，交易已回滾: {e}", exc_info=True)
