@@ -4,7 +4,7 @@
 
 本專案是一個基於 Python 與 NVIDIA TensorRT 的高效能智慧保全系統，旨在探索即時影像處理、物件追蹤與人物重識別 (Re-ID) 技術的整合應用。系統能夠處理 RTSP 影像流，進行即時物件偵測，並在觸發特定事件時，提取人物外觀特徵向量進行持久化儲存，為後續的跨攝影機追蹤與資料檢索奠定基礎。
 
-![](assets/demo_1.gif)   ![](assets/demo_2.gif)
+![](assets/demo_1.gif)   ![](assets/demo_3.gif)
 
 ## 專案狀態
 
