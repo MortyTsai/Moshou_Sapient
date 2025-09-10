@@ -14,13 +14,13 @@
 
 ## 核心特性
 
--   **高效能推論管線**: 整合 **YOLO11s** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
+-   **高效能推論管線**: 整合 **YOLO11** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
 -   **穩定的物件追蹤**: 採用 **BOTSORT** 追蹤器，並將偵測與特徵提取流程解耦，手動管理追蹤器生命週期，提升管線的穩定性與可控性。
 -   **長時人物重識別 (Long-Term Re-ID)**:
     -   **特徵集畫廊 (Gallery of Feature Sets)**: 建立「全域人物畫廊」資料庫，為每個人物維護一個由多個特徵向量組成的集合，而非單一代表性特徵。
     -   **魯棒的匹配邏輯**: 採用「穩定代表元聚類」演算法，能準確地在單一複雜事件中區分多個獨立人物，並透過「全域校準」將其與歷史資料庫進行比對，極大提升了在姿態、光照變化下的識別準確率。
 -   **事件驅動的特徵持久化**: 系統能在偵測到人物時觸發事件，並提取 Re-ID 特徵向量，使用 SQLAlchemy ORM 與 SQLite (WAL 模式) 將其與事件元數據一同高效存入資料庫。
--   **模組化架構**: 以 `CameraWorker` 類別封裝單一攝影機的處理邏輯 (影像擷取、AI處理、事件錄影)，具備良好的可擴展性。
+-   **模組化與可擴展架構**: 採用標準化的 `src` 佈局，將所有原始碼封裝在一個可安裝的套件中。以 `CameraWorker` 類別封裝單一攝影機的處理邏輯，具備良好的可擴展性。
 -   **遠端存取與可選通知**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
     -   透過 **Discord Bot** 非同步推送即時警報，此功能可透過設定檔完全啟用或禁用。
@@ -37,40 +37,55 @@
 ## 系統檔案結構
 
 ```
-MoshouSapient/
+MoshouSapient/                          # 專案根目錄
 │
-├── .env.example # 環境變數設定檔範本
-├── .gitignore # Git 版本控制忽略清單
-├── config.py # 中央設定檔，管理所有參數與環境變數
-├── custom_botsort.yaml # BoT-SORT 追蹤器客製化參數
-├── database.py # SQLAlchemy 資料庫初始化與 Session 管理
-├── export_tensorrt.py # YOLO 模型轉換為 TensorRT 引擎的腳本
-├── logging_setup.py # 全域日誌 (Logging) 設定模組
-├── main.py # 專案主程式入口
-├── models.py # 資料庫 ORM 模型定義 (Event, Person, PersonFeature)
-├── requirements.txt # Python 依賴套件列表
-├── web_dashboard.py # Flask Web 應用程式與路由定義
-├── yolo11s.engine # (生成) TensorRT 格式的偵測模型
-├── yolo11s.pt # (需下載) PyTorch 格式的偵測模型
-├── yolo11s-cls.pt # (需下載) PyTorch 格式的 Re-ID 模型
+├── .env.example                        # 環境變數設定檔範本
+├── .gitignore                          # Git 版本控制忽略清單
+├── README.md                           # 專案說明文件
+├── requirements.txt                    # Python 依賴套件列表
 │
-├── components/ # 核心功能元件
-│ ├── camera_worker.py # 核心類別，管理單一攝影機的所有執行緒與資源
-│ ├── discord_notifier.py # Discord Bot 通知模組
-│ ├── event_processor.py # 核心 AI 處理管線 (偵測、追蹤、Re-ID)
-│ ├── runners.py # 執行策略模組 (RTSP/File 模式)
-│ └── video_streamer.py # 使用 FFmpeg 進行影像流讀取的生產者模組
+├── configs/                            # 存放所有靜態設定檔
+│   └── custom_botsort.yaml             # BoT-SORT 追蹤器客製化參數
 │
-├── utils/ # 通用工具函式
-│ ├── reid_utils.py # Re-ID 相關工具函式 (畫廊比對邏輯)
-│ └── video_utils.py # 影片元數據讀取工具
+├── data/                               # (動態生成) 存放執行時資料 (如資料庫)
 │
-├── templates/ # Web 儀表板的 HTML 樣板
-│ └── index.html
+├── models/                             # 存放所有 AI 模型資產
+│   ├── yolo11s.pt                      # (需下載) PyTorch 格式的偵測模型
+│   ├── yolo11s-cls.pt                  # (需下載) PyTorch 格式的 Re-ID 模型
+│   └── yolo11s.engine                  # (動態生成) TensorRT 格式的偵測模型
 │
-├── captures/ # (動態生成) 儲存事件錄影的資料夾
+├── scripts/                            # 存放輔助開發腳本
+│   └── export_tensorrt.py              # 模型轉換為 TensorRT 引擎的腳本
 │
-└── venv/ # Python 虛擬環境
+└── src/                                # 存放所有專案原始碼
+    └── moshousapient/                  # 專案主 Python 套件
+        ├── __init__.py                 # 將目錄標記為 Python 套件
+        ├── __main__.py                 # 套件執行入口 (python -m moshousapient)
+        │
+        ├── components/                 # 核心功能元件子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── camera_worker.py        # 管理單一攝影機的核心類別
+        │   ├── discord_notifier.py     # Discord Bot 通知模組
+        │   ├── event_processor.py      # 核心 AI 處理管線 (偵測、追蹤、Re-ID)
+        │   ├── runners.py              # 執行策略模組 (RTSP/File 模式)
+        │   └── video_streamer.py       # FFmpeg 影像流讀取模組
+        │
+        ├── utils/                      # 通用工具函式子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── reid_utils.py           # Re-ID 相關工具函式
+        │   └── video_utils.py          # 影片元數據讀取工具
+        │
+        ├── web/                        # Web 儀表板子套件
+        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── app.py                  # Flask 應用程式與路由定義
+        │   └── templates/              # Web 儀表板的 HTML 樣板
+        │       └── index.html          # 儀表板主頁面樣板
+        │
+        ├── config.py                   # 中央設定類別與路徑管理
+        ├── database.py                 # SQLAlchemy 資料庫初始化與 Session 管理
+        ├── logging_setup.py            # 全域日誌 (Logging) 設定模組
+        ├── main.py                     # 專案主程式邏輯
+        └── models.py                   # 資料庫 ORM 模型定義
 ```
 
 ## 環境準備
@@ -105,19 +120,19 @@ MoshouSapient/
     ```bash
     # 1. 根據您的 CUDA 版本，從 PyTorch 官網安裝對應的 GPU 版本
     # 例如 CUDA 12.x:
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu12x
+    pip install torch torchvision toraudio --index-url https://download.pytorch.org/whl/cu12x
 
     # 2. 安裝其餘依賴
     pip install -r requirements.txt
     ```
 
 5.  **準備 AI 模型**:
-    -   下載 `yolo11s.pt` (物件偵測) 和 `yolo11s-cls.pt` (Re-ID) 模型檔案至專案根目錄。
+    -   將 `yolo11s.pt` (物件偵測) 和 `yolo11s-cls.pt` (Re-ID) 模型檔案放置在 `models/` 資料夾中。
     -   執行轉換腳本，將**偵測模型**生成為 TensorRT 引擎：
         ```bash
-        python export_tensorrt.py
+        python scripts/export_tensorrt.py
         ```
-    -   成功後會生成 `yolo11s.engine` 檔案。Re-ID 模型將維持以 PyTorch 格式載入。
+    -   成功後會在 `models/` 資料夾下生成 `yolo11s.engine` 檔案。
 
 ## 專案設定與執行
 
@@ -139,20 +154,19 @@ MoshouSapient/
 
     # RTSP 模式所需憑證
     # 請在此填入您攝影機的完整 RTSP URL。
-    # 範例 1 (Tapo): rtsp://YourCameraUsername:YourCameraPassword @YourCameraIPAddress:554/stream1
-    # 範例 2 (某些其他品牌): rtsp://YourCameraIPAddress:554/user=YourCameraUsername_password=YourCameraPassword_channel=1_stream=0.sdp
-    RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword @YourCameraIPAddress:554/stream1"
+    RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
 
-    # FILE 模式所需路徑
+    # FILE 模式所需路徑 (相對於專案根目錄)
     VIDEO_FILE_PATH="videos/input.mp4"
     ```
 
 2.  **微調追蹤器 (可選)**:
-    專案包含 `custom_botsort.yaml` 檔案，您可以在其中微調追蹤演算法的相關參數。
+    您可以在 `configs/custom_botsort.yaml` 檔案中微調追蹤演算法的相關參數。
 
 3.  **啟動系統**:
+    在專案**根目錄**下，執行以下指令：
     ```bash
-    python main.py
+    python -m moshousapient
     ```
 
 4.  **驗證**:
