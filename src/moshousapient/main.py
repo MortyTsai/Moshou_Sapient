@@ -40,9 +40,6 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
 
     if Config.VIDEO_SOURCE_TYPE == "FILE":
         logging.info(f"[系統] 影像來源模式: 本地檔案 ({Config.VIDEO_FILE_PATH})")
-        if not Config.VIDEO_FILE_PATH or not os.path.exists(Config.VIDEO_FILE_PATH):
-            logging.critical(f"[嚴重錯誤] 檔案未找到: {Config.VIDEO_FILE_PATH}。請檢查 .env 設定。")
-            return None
         source_uri = Config.VIDEO_FILE_PATH
         source_name = os.path.basename(source_uri)
 
@@ -67,6 +64,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
 def main():
     # 1. 初始化
     setup_logging()
+    Config.initialize_static_settings()
 
     if not pre_flight_checks():
         sys.exit(1)
