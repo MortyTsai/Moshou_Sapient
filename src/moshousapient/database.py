@@ -1,10 +1,20 @@
 # database.py
 import logging
+import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
-DATABASE_URL = "sqlite:///security_events.db?check_same_thread=False"
+# 建立指向專案根目錄的路徑
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 定義資料庫檔案的完整路徑
+DB_FILE = os.path.join(PROJECT_ROOT, "data", "security_events.db")
+
+# 確保 data 資料夾存在
+os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+
+DATABASE_URL = f"sqlite:///{DB_FILE}?check_same_thread=False"
 
 engine = create_engine(
     DATABASE_URL,
@@ -13,7 +23,7 @@ engine = create_engine(
 )
 
 @event.listens_for(engine, "connect")
-def _set_wal_pragma_on_connect(dbapi_connection, _connection_record):
+def set_wal_pragma_on_connect(dbapi_connection, _connection_record):
     """啟用 SQLite WAL 模式以支援高併發讀寫"""
     cursor = dbapi_connection.cursor()
     try:
