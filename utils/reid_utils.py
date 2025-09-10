@@ -26,7 +26,6 @@ def find_best_match_in_gallery(new_feature: NDArray, gallery: list[Person]) -> O
     """
     在給定的畫廊(候選人列表)中，為新特徵尋找最佳匹配。
     """
-    # ... (The logic of find_best_match remains exactly the same) ...
     best_match_person = None
     highest_overall_similarity = -1.0
 
