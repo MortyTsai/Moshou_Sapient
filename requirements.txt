@@ -1,4 +1,5 @@
 # requirements.txt
+
 # Core AI and CV
 ultralytics>=8.0.0
 opencv-python>=4.8.0
@@ -23,3 +24,6 @@ scikit-image>=0.21.0
 filterpy>=1.4.5
 lap>=0.4.0
 scipy>=1.11.0
+
+# Geometric Analysis (for ROI)
+Shapely>=2.0.0
