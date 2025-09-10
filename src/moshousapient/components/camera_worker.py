@@ -1,19 +1,21 @@
-# camera_worker.py
+# src/moshousapient/components/camera_worker.py
+
 import threading
 from queue import Queue
 import logging
 import yaml
 from types import SimpleNamespace
+
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
+
 from .video_streamer import VideoStreamer
 from .event_processor import frame_consumer, inference_worker
 from ..config import Config
 
+
 class CameraWorker:
-    """
-    封裝單一攝影機所有相關元件和執行緒的類別。
-    """
+    """封裝單一攝影機所有相關元件和執行緒的類別。"""
 
     def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
         # 1. 基礎屬性
@@ -58,14 +60,12 @@ class CameraWorker:
         self.consumer_thread = threading.Thread(
             target=frame_consumer,
             name=f"{self.name}-Consumer",
-            args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock,
-                  self.active_recorders)
+            args=(self.consumer_queue, self.shared_state, self.stop_event, self.notifier, self.shared_state_lock, self.active_recorders)
         )
         self.inference_thread = threading.Thread(
             target=inference_worker,
             name=f"{self.name}-Inference",
-            args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model,
-                  self.reid_model, self.tracker)
+            args=(self.inference_queue, self.shared_state, self.stop_event, self.shared_state_lock, self.model, self.reid_model, self.tracker)
         )
         self.threads = [self.consumer_thread, self.inference_thread]
 
@@ -79,6 +79,7 @@ class CameraWorker:
     def stop(self):
         logging.info(f"[{self.name}] 正在關閉...")
         self.stop_event.set()
+
         if self.video_streamer:
             self.video_streamer.stop()
 
@@ -101,7 +102,7 @@ class CameraWorker:
     def is_alive(self):
         """
         定義 Worker 的存活狀態。
-        這是打破 FILE 模式下死鎖的關鍵：只要 video_streamer 停止，就代表 worker 的主要任務已完成。
+        這是打破 FILE 模式下死鎖的關鍵: 只要 video_streamer 停止，就代表 worker 的主要任務已完成。
         """
         streamer_thread_alive = self.video_streamer.thread and self.video_streamer.thread.is_alive()
         return all(t.is_alive() for t in self.threads) and streamer_thread_alive
