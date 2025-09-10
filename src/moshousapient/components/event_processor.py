@@ -1,4 +1,5 @@
-# event_processor.py
+# src/moshousapient/components/event_processor.py
+
 import cv2
 import time
 import threading
@@ -9,27 +10,26 @@ import pickle
 from collections import deque
 from queue import Empty, Queue
 from datetime import datetime
+
 import numpy as np
 from ultralytics import YOLO
+from shapely.geometry import Point
+
 from ..config import Config
 from ..database import SessionLocal
 from ..models import Event, Person, PersonFeature
 from ..utils.reid_utils import cosine_similarity, find_best_match_in_gallery
 from sqlalchemy.orm import selectinload
 
+
 def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                      lock: threading.Lock, model: YOLO, reid_model: YOLO, tracker):
-    """
-    AI 推論執行緒
-    """
-    logging.info("推論器: 執行緒已啟動, 使用 GPU。")
-
+    """AI 推論執行緒"""
+    logging.info("[推論器] 執行緒已啟動, 使用 GPU。")
     frame_counter = 0
     reid_interval = 5
-
     latency_buffer, det_time_buffer, track_time_buffer, reid_time_buffer = [], [], [], []
     logging_interval_frames = 60
-
     while not stop_event.is_set():
         try:
             with lock:
@@ -37,24 +37,24 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
                     tracker.reset()
                     shared_state['event_ended'] = False
                     logging.info("[推論器] 偵測到事件結束，已重置追蹤器狀態。")
-
             item = frame_queue.get(timeout=1)
             frame_counter += 1
-
             t_capture = item['time']
             frame_low_res = cv2.resize(item['frame'], (Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT))
-
             t_det_start = time.time()
             dets_results = model(frame_low_res, device=0, verbose=False, classes=[0], conf=0.4)
             t_track_start = time.time()
-
             boxes_on_cpu = dets_results[0].boxes.cpu()
             tracks = tracker.update(boxes_on_cpu, frame_low_res)
+            track_roi_status = {}
+            if Config.ROI_POLYGON_OBJECT and len(tracks) > 0:
+                for track in tracks:
+                    x1, y1, x2, y2, track_id = track[:5]
+                    bottom_center_point = Point((x1 + x2) / 2, y2)
+                    track_roi_status[int(track_id)] = Config.ROI_POLYGON_OBJECT.contains(bottom_center_point)
             t_reid_start = time.time()
-
             reid_features_map = {}
             person_crops = []
-
             if len(tracks) > 0 and (frame_counter % reid_interval == 0):
                 track_ids = tracks[:, 4].astype(int)
                 xyxy_coords = tracks[:, :4]
@@ -65,166 +65,205 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
                     if crop.size > 0:
                         person_crops.append(crop)
                         valid_track_ids.append(track_ids[i])
-
                 if person_crops:
                     embeddings = reid_model.embed(person_crops, verbose=False)
                     for i, track_id in enumerate(valid_track_ids):
                         reid_features_map[track_id] = embeddings[i].cpu().numpy()
-
             t_reid_end = time.time()
-
             with lock:
                 shared_state['person_detected'] = len(tracks) > 0
                 shared_state['tracked_objects'] = tracks
                 shared_state['reid_features_map'] = reid_features_map
-
+                shared_state['track_roi_status'] = track_roi_status
             total_latency_ms = (t_reid_end - t_capture) * 1000
             det_time_ms = (t_track_start - t_det_start) * 1000
             track_time_ms = (t_reid_start - t_track_start) * 1000
             reid_time_ms = 0
             if person_crops:
                 reid_time_ms = (t_reid_end - t_reid_start) * 1000
-
             latency_buffer.append(total_latency_ms)
             det_time_buffer.append(det_time_ms)
             track_time_buffer.append(track_time_ms)
             reid_time_buffer.append(reid_time_ms)
-
             if len(latency_buffer) >= logging_interval_frames:
                 logging.info(
-                    f"[推論器] 延遲統計 (avg over {len(latency_buffer)} frames): "
-                    f"Total: {np.mean(latency_buffer):.1f} ms | "
-                    f"Detect: {np.mean(det_time_buffer):.1f} ms, "
-                    f"Track: {np.mean(track_time_buffer):.1f} ms, "
-                    f"Re-ID: {np.mean(reid_time_buffer):.1f} ms"
-                )
+                    f"[推論器] 延遲統計 (avg over {len(latency_buffer)} frames): Total: {np.mean(latency_buffer):.1f} ms | Detect: {np.mean(det_time_buffer):.1f} ms, Track: {np.mean(track_time_buffer):.1f} ms, Re-ID: {np.mean(reid_time_buffer):.1f} ms")
                 latency_buffer.clear()
                 det_time_buffer.clear()
                 track_time_buffer.clear()
                 reid_time_buffer.clear()
-
         except Empty:
             with lock:
                 shared_state['person_detected'] = False
                 shared_state['tracked_objects'] = np.empty((0, 5))
                 shared_state['reid_features_map'] = {}
+                shared_state['track_roi_status'] = {}
             continue
         except Exception as e:
-            logging.error(f"推論器: 執行緒發生錯誤: {e}", exc_info=True)
+            logging.error(f"[推論器] 執行緒發生錯誤: {e}", exc_info=True)
+    logging.info("[推論器] 執行緒已停止。")
 
-    logging.info("推論器: 執行緒已停止。")
 
 def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                    notifier, lock: threading.Lock, active_recorders: list):
-    logging.info("消費者: 執行緒已啟動。")
+    logging.info("[消費者] 執行緒已啟動。")
     is_capturing_event, last_person_seen_time, last_event_ended_time = False, 0, 0
     buffer_size = int(Config.PRE_EVENT_SECONDS * Config.TARGET_FPS * 1.5)
     frame_buffer = deque(maxlen=buffer_size)
     event_recording, current_event_features = [], []
-
+    current_event_type = None
+    dwell_time_trackers = {}
     debug_log_counter = 0
     DEBUG_LOG_INTERVAL = 60
+
+    event_start_time = 0
 
     while not stop_event.is_set():
         try:
             item = frame_queue.get(timeout=1)
             current_time = item['time']
             debug_log_counter += 1
-
             with lock:
                 person_detected_now = shared_state.get('person_detected', False)
                 num_tracks = len(shared_state.get('tracked_objects', []))
                 reid_features_map_now = shared_state.get('reid_features_map', {})
-
+                track_roi_status_now = shared_state.get('track_roi_status', {})
             if debug_log_counter % DEBUG_LOG_INTERVAL == 0:
-                logging.info(f"[消費者-偵錯] person_detected: {person_detected_now}, num_tracks: {num_tracks}, is_capturing: {is_capturing_event}")
-
-            frame_data = {'frame': item['frame'], 'time': current_time, 'tracks': shared_state.get('tracked_objects', np.empty((0, 5)))}
+                logging.info(
+                    f"[消費者-偵錯] person_detected: {person_detected_now}, num_tracks: {num_tracks}, is_capturing: {is_capturing_event}")
+            if Config.ROI_POLYGON_OBJECT:
+                for track_id, is_in_roi in track_roi_status_now.items():
+                    if is_in_roi:
+                        if track_id not in dwell_time_trackers:
+                            dwell_time_trackers[track_id] = {'start_time': current_time, 'alerted': False}
+                        else:
+                            tracker_info = dwell_time_trackers[track_id]
+                            if not tracker_info['alerted']:
+                                dwell_duration = current_time - tracker_info['start_time']
+                                if dwell_duration > Config.ROI_DWELL_TIME_THRESHOLD:
+                                    logging.warning(
+                                        f"--- [行為警報] --- 目標 ID: {track_id} 在 ROI 區域停留已超過 {Config.ROI_DWELL_TIME_THRESHOLD} 秒！")
+                                    tracker_info['alerted'] = True
+                                    if not is_capturing_event:
+                                        current_event_type = "dwell_alert"
+                    else:
+                        if track_id in dwell_time_trackers:
+                            del dwell_time_trackers[track_id]
+                current_tracked_ids = set(track_roi_status_now.keys())
+                disappeared_ids = set(dwell_time_trackers.keys()) - current_tracked_ids
+                for track_id in disappeared_ids:
+                    del dwell_time_trackers[track_id]
+            frame_data = {'frame': item['frame'], 'time': current_time,
+                          'tracks': shared_state.get('tracked_objects', np.empty((0, 5))),
+                          'track_roi_status': track_roi_status_now}
             if is_capturing_event:
                 event_recording.append(frame_data)
-                if reid_features_map_now: current_event_features.extend(reid_features_map_now.values())
+                if reid_features_map_now:
+                    current_event_features.extend(reid_features_map_now.values())
             else:
                 frame_buffer.append(frame_data)
             if person_detected_now:
                 last_person_seen_time = current_time
-            if person_detected_now and not is_capturing_event:
-                if current_time - last_event_ended_time > Config.COOLDOWN_PERIOD:
-                    logging.info(">>> [消費者] 偵測到人物! 觸發事件錄製... <<<")
+            if not is_capturing_event:
+                if current_event_type == "dwell_alert":
+                    logging.info(f">>> [消費者] 偵測到 '{current_event_type}' 事件! 觸發事件錄製... <<<")
                     is_capturing_event = True
+                elif person_detected_now and current_time - last_event_ended_time > Config.COOLDOWN_PERIOD:
+                    current_event_type = "person_detected"
+                    logging.info(f">>> [消費者] 偵測到 '{current_event_type}' 事件! 觸發事件錄製... <<<")
+                    is_capturing_event = True
+                if is_capturing_event:
                     event_recording = list(frame_buffer)
+                    event_start_time = current_time  # <-- 記錄事件開始時間
                     current_event_features.clear()
-                    if reid_features_map_now: current_event_features.extend(reid_features_map_now.values())
-            if is_capturing_event and (current_time - last_person_seen_time > Config.POST_EVENT_SECONDS):
-                logging.info("[消費者] 事件後續幀捕捉完成。")
+                    if reid_features_map_now:
+                        current_event_features.extend(reid_features_map_now.values())
+
+            should_end_event = False
+            end_reason = ""
+            if is_capturing_event:
+                if current_time - last_person_seen_time > Config.POST_EVENT_SECONDS:
+                    should_end_event = True
+                    end_reason = "人物消失"
+                elif current_time - event_start_time > Config.MAX_EVENT_DURATION:
+                    should_end_event = True
+                    end_reason = "超過最大錄影時長"
+
+            if should_end_event:
+                logging.info(f"[消費者] 事件結束 ({end_reason})。")
                 if len(event_recording) > 1:
                     duration = event_recording[-1]['time'] - event_recording[0]['time']
                     actual_fps = len(event_recording) / duration if duration > 0 else Config.TARGET_FPS
-                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread", args=(list(event_recording), notifier, actual_fps, list(current_event_features)))
+                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread",
+                                                       args=(list(event_recording), notifier, actual_fps,
+                                                             list(current_event_features), current_event_type))
                     active_recorders.append(encoding_thread)
                     encoding_thread.start()
                 is_capturing_event, event_recording = False, []
                 current_event_features.clear()
+                current_event_type = None
                 last_event_ended_time = current_time
-                with lock: shared_state['event_ended'] = True
+                with lock:
+                    shared_state['event_ended'] = True
         except Empty:
             if is_capturing_event:
                 logging.info("[消費者] 佇列為空，結束當前事件錄製。")
                 if len(event_recording) > 1:
                     duration = event_recording[-1]['time'] - event_recording[0]['time']
                     actual_fps = len(event_recording) / duration if duration > 0 else Config.TARGET_FPS
-                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread", args=(list(event_recording), notifier, actual_fps, list(current_event_features)))
+                    encoding_thread = threading.Thread(target=encode_and_send_video, name="EncodingThread",
+                                                       args=(list(event_recording), notifier, actual_fps,
+                                                             list(current_event_features), current_event_type))
                     active_recorders.append(encoding_thread)
                     encoding_thread.start()
                 is_capturing_event, event_recording = False, []
                 current_event_features.clear()
+                current_event_type = None
                 last_event_ended_time = time.time()
-                with lock: shared_state['event_ended'] = True
+                with lock:
+                    shared_state['event_ended'] = True
             continue
         except Exception as e:
-            logging.error(f"消費者: 執行緒發生錯誤: {e}", exc_info=True)
-    logging.info("消費者: 執行緒已停止。")
+            logging.error(f"[消費者] 執行緒發生錯誤: {e}", exc_info=True)
+    logging.info("[消費者] 執行緒已停止。")
 
 
-def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float, reid_features_list: list):
+def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float,
+                          reid_features_list: list, event_type: str = "person_detected"):
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS, 取消編碼。")
         return
-
     num_frames = len(frame_data_list)
-    logging.info(f">>> [GPU 編碼器] 收到 {num_frames} 幀影像, 開始以 {actual_fps:.2f} FPS 進行硬體編碼...")
-
+    logging.info(
+        f">>> [GPU 編碼器] 收到 {num_frames} 幀影像 (事件類型: {event_type}), 開始以 {actual_fps:.2f} FPS 進行硬體編碼...")
     start_time = time.time()
     now = datetime.now()
     timestamp_for_display = now.strftime("%Y-%m-%d %H:%M:%S")
     timestamp_for_filename = now.strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"event_{timestamp_for_filename}.mp4"
+    filename = f"{event_type}_{timestamp_for_filename}.mp4"
     save_path = os.path.join(Config.CAPTURES_DIR, filename)
     frame_size_str = f'{Config.ENCODE_WIDTH}x{Config.ENCODE_HEIGHT}'
-
-    command = [
-        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', frame_size_str,
-        '-pix_fmt', 'bgr24', '-r', str(actual_fps), '-i', '-',
-        '-c:v', 'hevc_nvenc', '-preset', 'p6', '-rc', 'vbr', '-cq', '30',
-        '-b:v', '1M', '-maxrate', '2M', '-pix_fmt', 'yuv420p', save_path
-    ]
-
+    command = ['ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', frame_size_str, '-pix_fmt', 'bgr24', '-r',
+               str(actual_fps), '-i', '-', '-c:v', 'hevc_nvenc', '-preset', 'p6', '-rc', 'vbr', '-cq', '30', '-b:v',
+               '1M', '-maxrate', '2M', '-pix_fmt', 'yuv420p', save_path]
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
     scale_x = Config.ENCODE_WIDTH / Config.ANALYSIS_WIDTH
     scale_y = Config.ENCODE_HEIGHT / Config.ANALYSIS_HEIGHT
-
     try:
         for frame_data in frame_data_list:
             frame = frame_data['frame'].copy()
             tracked_objects = frame_data['tracks']
+            track_roi_status = frame_data.get('track_roi_status', {})
             for d in tracked_objects:
                 x1, y1, x2, y2, track_id = d[:5]
+                track_id = int(track_id)
+                is_in_roi = track_roi_status.get(track_id, False)
+                color = (0, 0, 255) if is_in_roi else (0, 255, 0)
                 x1_s, y1_s = int(x1 * scale_x), int(y1 * scale_y)
                 x2_s, y2_s = int(x2 * scale_x), int(y2 * scale_y)
-                track_id = int(track_id)
-                cv2.rectangle(frame, (x1_s, y1_s), (x2_s, y2_s), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x1_s, y1_s), (x2_s, y2_s), color, 2)
                 label = f"ID: {track_id}"
-                cv2.putText(frame, label, (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                cv2.putText(frame, label, (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
             process.stdin.write(frame.tobytes())
     except (BrokenPipeError, IOError):
         logging.warning("[GPU 編碼器] 警告: FFmpeg 程序在寫入完成前已關閉管道。")
@@ -233,17 +272,13 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     finally:
         if process.stdin:
             process.stdin.close()
-
     stdout_output, stderr_output = process.communicate()
     end_time = time.time()
-
     encoding_duration = end_time - start_time
     encoding_fps = num_frames / encoding_duration if encoding_duration > 0 else 0
     logging.info(f"[GPU 編碼器] FFmpeg 硬體編碼耗時: {encoding_duration:.2f} 秒。")
     logging.info(f"[GPU 編碼器] ===> 實際平均編碼幀率: {encoding_fps:.2f} FPS <===")
-
     event_person_id_val = None
-
     if reid_features_list:
         unique_features = []
         seen_features_hashes = set()
@@ -252,93 +287,67 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
             if feature_hash not in seen_features_hashes:
                 unique_features.append(feature)
                 seen_features_hashes.add(feature_hash)
-
         logging.info(
-            f"[特徵處理] 開始處理事件。原始特徵數: {len(reid_features_list)}, "
-            f"去重後獨立特徵數: {len(unique_features)}"
-        )
-
+            f"[特徵處理] 開始處理事件。原始特徵數: {len(reid_features_list)}, 去重後獨立特徵數: {len(unique_features)}")
         db = SessionLocal()
         try:
             event_clusters = []
             for feature in unique_features:
                 best_match_cluster = None
                 highest_sim = -1.0
-
                 for cluster in event_clusters:
                     representative_feature = pickle.loads(cluster.features[0].feature)
                     sim = cosine_similarity(feature, representative_feature)
                     if sim > highest_sim:
                         highest_sim = sim
                         best_match_cluster = cluster
-
                 if highest_sim >= Config.PERSON_MATCH_THRESHOLD and best_match_cluster:
                     new_feature_obj = PersonFeature(feature=pickle.dumps(feature))
-                    best_match_cluster.features.append(new_feature_obj)  # type: ignore
+                    best_match_cluster.features.append(new_feature_obj)
                 else:
                     new_cluster = Person()
                     new_feature_obj = PersonFeature(feature=pickle.dumps(feature))
-                    new_cluster.features.append(new_feature_obj)  # type: ignore
+                    new_cluster.features.append(new_feature_obj)
                     event_clusters.append(new_cluster)
-
             logging.info(f"[特徵處理] 事件內聚類完成，發現 {len(event_clusters)} 個潛在獨立人物。")
-
             static_persons_gallery = db.query(Person).options(selectinload(Person.features)).all()
-            # ▼▼▼ 新增此行 ▼▼▼
             initial_db_persons = set(static_persons_gallery)
-            # ▲▲▲ 新增此行 ▲▲▲
-            final_person_map = {}  # {cluster_obj: final_db_person_obj}
-
+            final_person_map = {}
             for cluster in event_clusters:
                 representative_feature = pickle.loads(cluster.features[0].feature)
                 db_match = find_best_match_in_gallery(representative_feature, static_persons_gallery)
-
                 if db_match:
                     final_person_map[cluster] = db_match
                 else:
                     db.add(cluster)
                     final_person_map[cluster] = cluster
                     static_persons_gallery.append(cluster)
-
             unique_persons_in_event = set(final_person_map.values())
-
             for cluster, final_person in final_person_map.items():
                 if final_person != cluster:
                     for feature_obj in cluster.features:
-                        final_person.features.append(
-                            PersonFeature(feature=feature_obj.feature)
-                        )  # type: ignore
-
+                        final_person.features.append(PersonFeature(feature=feature_obj.feature))
                 if final_person in initial_db_persons:
                     final_person.sighting_count += 1
-
             if event_clusters:
                 first_cluster = event_clusters[0]
                 first_person_obj = final_person_map[first_cluster]
                 db.flush()
                 event_person_id_val = first_person_obj.id
-
             db.commit()
             reidentified_persons = unique_persons_in_event.intersection(initial_db_persons)
             new_persons = unique_persons_in_event.difference(initial_db_persons)
-
             num_reidentified = len(reidentified_persons)
             num_new = len(new_persons)
-
             log_msg = (
-                f"[資料庫] 成功提交 Re-ID 處理結果。本次事件涉及 {len(unique_persons_in_event)} 個獨立人物 "
-                f"(新增 {num_new} 人, 識別 {num_reidentified} 人)。"
-            )
+                f"[資料庫] 成功提交 Re-ID 處理結果。本次事件涉及 {len(unique_persons_in_event)} 個獨立人物 (新增 {num_new} 人, 識別 {num_reidentified} 人)。")
             logging.info(log_msg)
-
-
         except Exception as e:
             logging.error(f"[特徵處理] 處理 Re-ID 特徵時發生嚴重錯誤，交易已回滾: {e}", exc_info=True)
             db.rollback()
             event_person_id_val = None
         finally:
             db.close()
-
     if process.returncode != 0:
         logging.error(f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {process.returncode}")
         logging.error(f"[GPU 編碼器 stderr]: {stderr_output.decode('utf-8', errors='ignore').strip()}")
@@ -346,12 +355,8 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
         logging.info(f"[資訊] 事件影片已儲存至: {save_path}")
         db = SessionLocal()
         try:
-            new_event = Event(
-                video_path=save_path,
-                event_type="person_detected",
-                status="unreviewed",
-                person_id=event_person_id_val
-            )
+            new_event = Event(video_path=save_path, event_type=event_type, status="unreviewed",
+                              person_id=event_person_id_val)
             db.add(new_event)
             db.commit()
             db.refresh(new_event)
@@ -361,14 +366,7 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
             db.rollback()
         finally:
             db.close()
-
     if notifier_instance:
         notification_message = (
-            f"**事件警報!**\n"
-            f"於 `{timestamp_for_display}` 偵測到活動。\n"
-            f"影片: {Config.ENCODE_HEIGHT}p @ {actual_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS"
-        )
+            f"**事件警報! ({event_type})**\n" f"於 `{timestamp_for_display}` 偵測到活動。\n" f"影片: {Config.ENCODE_HEIGHT}p @ {actual_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS")
         notifier_instance.schedule_notification(notification_message, file_path=save_path)
-
-
-
