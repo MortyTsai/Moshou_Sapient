@@ -5,7 +5,6 @@ from sqlalchemy import DateTime, func, LargeBinary, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from .database import Base
 
-
 class Event(Base):
     __tablename__ = "events"
 

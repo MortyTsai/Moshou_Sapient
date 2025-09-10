@@ -32,7 +32,6 @@ def pre_flight_checks():
     logging.info(f"[系統] CUDA 設備檢查通過。偵測到 GPU: {torch.cuda.get_device_name(0)}")
     return True
 
-# --- 新增輔助函式 ---
 def get_camera_config() -> Optional[Dict[str, Any]]:
     """
     根據 .env 設定解析並回傳攝影機設定字典。
