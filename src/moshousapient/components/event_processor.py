@@ -13,8 +13,8 @@ from datetime import datetime
 
 import numpy as np
 from ultralytics import YOLO
-from shapely.geometry import Point
-
+from shapely.geometry import Point, LineString
+from ..utils.geometry_utils import get_point_side_of_line
 from ..config import Config
 from ..database import SessionLocal
 from ..models import Event, Person, PersonFeature
@@ -103,7 +103,6 @@ def inference_worker(frame_queue: Queue, shared_state: dict, stop_event: threadi
             logging.error(f"[推論器] 執行緒發生錯誤: {e}", exc_info=True)
     logging.info("[推論器] 執行緒已停止。")
 
-
 def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading.Event,
                    notifier, lock: threading.Lock, active_recorders: list):
     logging.info("[消費者] 執行緒已啟動。")
@@ -113,9 +112,11 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
     event_recording, current_event_features = [], []
     current_event_type = None
     dwell_time_trackers = {}
+    track_last_positions = {}
+    tripwire_alert_ids = set()
+
     debug_log_counter = 0
     DEBUG_LOG_INTERVAL = 60
-
     event_start_time = 0
 
     while not stop_event.is_set():
@@ -125,12 +126,64 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
             debug_log_counter += 1
             with lock:
                 person_detected_now = shared_state.get('person_detected', False)
-                num_tracks = len(shared_state.get('tracked_objects', []))
+                current_tracks = shared_state.get('tracked_objects', [])
                 reid_features_map_now = shared_state.get('reid_features_map', {})
                 track_roi_status_now = shared_state.get('track_roi_status', {})
+
             if debug_log_counter % DEBUG_LOG_INTERVAL == 0:
                 logging.info(
-                    f"[消費者-偵錯] person_detected: {person_detected_now}, num_tracks: {num_tracks}, is_capturing: {is_capturing_event}")
+                    f"[消費者-偵錯] person_detected: {person_detected_now}, num_tracks: {len(current_tracks)}, is_capturing: {is_capturing_event}")
+
+            current_tracked_ids = set()
+            if len(current_tracks) > 0:
+                for track in current_tracks:
+                    x1, y1, x2, y2, track_id = track[:5]
+                    track_id = int(track_id)
+                    current_tracked_ids.add(track_id)
+
+                    current_position = Point((x1 + x2) / 2, y2)
+                    last_position = track_last_positions.get(track_id)
+
+                    if last_position and last_position != current_position and Config.TRIPWIRE_LINE_OBJECTS:
+                        movement_line = LineString([last_position, current_position])
+                        for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
+                            tripwire_line = tripwire_obj["line"]
+                            alert_direction = tripwire_obj["direction"]
+
+                            if movement_line.intersects(tripwire_line):
+                                p1, p2 = tripwire_line.coords
+                                side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
+                                side_after = get_point_side_of_line(current_position, Point(p1), Point(p2))
+
+                                if side_before != 0 and side_after != 0 and side_before != side_after:
+                                    crossed_to_right = side_before == 1 and side_after == -1
+                                    crossed_to_left = side_before == -1 and side_after == 1
+
+                                    should_alert = (alert_direction == "both" or
+                                                    (alert_direction == "cross_to_right" and crossed_to_right) or
+                                                    (alert_direction == "cross_to_left" and crossed_to_left))
+
+                                    if should_alert:
+                                        logging.warning(
+                                            f"--- [方向性警報] --- 目標 ID: {track_id} 觸發了警戒線！")
+                                        tripwire_alert_ids.add(track_id)
+                                        if not is_capturing_event:
+                                            current_event_type = "tripwire_alert"
+                                        elif current_event_type in ["person_detected", "dwell_alert"]:
+                                            logging.info(
+                                                f">>> [事件升級] '{current_event_type}' 事件已升級為 'tripwire_alert'。")
+                                            current_event_type = "tripwire_alert"
+                                        break
+
+                    track_last_positions[track_id] = current_position
+
+            # --- 核心修正：當一個 ID 消失時，同時清除其高亮狀態 ---
+            disappeared_ids = set(track_last_positions.keys()) - current_tracked_ids
+            for track_id in disappeared_ids:
+                del track_last_positions[track_id]
+                # 使用 .discard() 而不是 .remove() 以避免 track_id 不在集合中時引發錯誤
+                tripwire_alert_ids.discard(track_id)
+
             if Config.ROI_POLYGON_OBJECT:
                 for track_id, is_in_roi in track_roi_status_now.items():
                     if is_in_roi:
@@ -146,43 +199,51 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
                                     tracker_info['alerted'] = True
                                     if not is_capturing_event:
                                         current_event_type = "dwell_alert"
+                                    elif current_event_type == "person_detected":
+                                        logging.info(f">>> [事件升級] 'person_detected' 事件已升級為 'dwell_alert'。")
+                                        current_event_type = "dwell_alert"
                     else:
                         if track_id in dwell_time_trackers:
                             del dwell_time_trackers[track_id]
-                current_tracked_ids = set(track_roi_status_now.keys())
-                disappeared_ids = set(dwell_time_trackers.keys()) - current_tracked_ids
-                for track_id in disappeared_ids:
+
+                disappeared_ids_dwell = set(dwell_time_trackers.keys()) - current_tracked_ids
+                for track_id in disappeared_ids_dwell:
                     del dwell_time_trackers[track_id]
+
             frame_data = {'frame': item['frame'], 'time': current_time,
                           'tracks': shared_state.get('tracked_objects', np.empty((0, 5))),
-                          'track_roi_status': track_roi_status_now}
+                          'track_roi_status': track_roi_status_now,
+                          'tripwire_alert_ids': tripwire_alert_ids.copy()}
+
             if is_capturing_event:
                 event_recording.append(frame_data)
                 if reid_features_map_now:
                     current_event_features.extend(reid_features_map_now.values())
             else:
                 frame_buffer.append(frame_data)
+
             if person_detected_now:
                 last_person_seen_time = current_time
+
             if not is_capturing_event:
-                if current_event_type == "dwell_alert":
+                if current_event_type in ["dwell_alert", "tripwire_alert"]:
                     logging.info(f">>> [消費者] 偵測到 '{current_event_type}' 事件! 觸發事件錄製... <<<")
                     is_capturing_event = True
                 elif person_detected_now and current_time - last_event_ended_time > Config.COOLDOWN_PERIOD:
                     current_event_type = "person_detected"
                     logging.info(f">>> [消費者] 偵測到 '{current_event_type}' 事件! 觸發事件錄製... <<<")
                     is_capturing_event = True
+
                 if is_capturing_event:
                     event_recording = list(frame_buffer)
-                    event_start_time = current_time  # <-- 記錄事件開始時間
+                    event_start_time = current_time
                     current_event_features.clear()
-                    if reid_features_map_now:
-                        current_event_features.extend(reid_features_map_now.values())
+                    tripwire_alert_ids.clear()
 
             should_end_event = False
             end_reason = ""
             if is_capturing_event:
-                if current_time - last_person_seen_time > Config.POST_EVENT_SECONDS:
+                if not person_detected_now and current_time - last_person_seen_time > Config.POST_EVENT_SECONDS:
                     should_end_event = True
                     end_reason = "人物消失"
                 elif current_time - event_start_time > Config.MAX_EVENT_DURATION:
@@ -227,15 +288,17 @@ def frame_consumer(frame_queue: Queue, shared_state: dict, stop_event: threading
             logging.error(f"[消費者] 執行緒發生錯誤: {e}", exc_info=True)
     logging.info("[消費者] 執行緒已停止。")
 
-
 def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: float,
                           reid_features_list: list, event_type: str = "person_detected"):
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS, 取消編碼。")
         return
+
     num_frames = len(frame_data_list)
     logging.info(
-        f">>> [GPU 編碼器] 收到 {num_frames} 幀影像 (事件類型: {event_type}), 開始以 {actual_fps:.2f} FPS 進行硬體編碼...")
+        f">>> [GPU 編碼器] 收到 {num_frames} 幀影像 (事件類型: {event_type}), 開始以 "
+        f"{actual_fps:.2f} FPS 進行硬體編碼...")
+
     start_time = time.time()
     now = datetime.now()
     timestamp_for_display = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -243,28 +306,54 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     filename = f"{event_type}_{timestamp_for_filename}.mp4"
     save_path = os.path.join(Config.CAPTURES_DIR, filename)
     frame_size_str = f'{Config.ENCODE_WIDTH}x{Config.ENCODE_HEIGHT}'
-    command = ['ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', frame_size_str, '-pix_fmt', 'bgr24', '-r',
-               str(actual_fps), '-i', '-', '-c:v', 'hevc_nvenc', '-preset', 'p6', '-rc', 'vbr', '-cq', '30', '-b:v',
-               '1M', '-maxrate', '2M', '-pix_fmt', 'yuv420p', save_path]
+
+    command = ['ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', frame_size_str,
+               '-pix_fmt', 'bgr24', '-r', str(actual_fps), '-i', '-', '-c:v', 'hevc_nvenc',
+               '-preset', 'p6', '-rc', 'vbr', '-cq', '30', '-b:v', '1M', '-maxrate', '2M',
+               '-pix_fmt', 'yuv420p', save_path]
+
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
     scale_x = Config.ENCODE_WIDTH / Config.ANALYSIS_WIDTH
     scale_y = Config.ENCODE_HEIGHT / Config.ANALYSIS_HEIGHT
+
     try:
         for frame_data in frame_data_list:
             frame = frame_data['frame'].copy()
+
+            if Config.TRIPWIRE_LINE_OBJECTS:
+                for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
+                    # --- 核心修正：從字典中正確獲取 line 物件 ---
+                    line = tripwire_obj["line"]
+                    p1, p2 = line.coords
+                    p1_scaled = (int(p1[0] * scale_x), int(p1[1] * scale_y))
+                    p2_scaled = (int(p2[0] * scale_x), int(p2[1] * scale_y))
+                    # 繪製箭頭以表示方向
+                    cv2.arrowedLine(frame, p1_scaled, p2_scaled, (0, 0, 255), 2, tipLength=0.05)
+
             tracked_objects = frame_data['tracks']
             track_roi_status = frame_data.get('track_roi_status', {})
+            alert_ids = frame_data.get('tripwire_alert_ids', set())
+
             for d in tracked_objects:
                 x1, y1, x2, y2, track_id = d[:5]
                 track_id = int(track_id)
-                is_in_roi = track_roi_status.get(track_id, False)
-                color = (0, 0, 255) if is_in_roi else (0, 255, 0)
+
+                if track_id in alert_ids:
+                    color = (255, 0, 255)
+                else:
+                    is_in_roi = track_roi_status.get(track_id, False)
+                    color = (0, 0, 255) if is_in_roi else (0, 255, 0)
+
                 x1_s, y1_s = int(x1 * scale_x), int(y1 * scale_y)
                 x2_s, y2_s = int(x2 * scale_x), int(y2 * scale_y)
+
                 cv2.rectangle(frame, (x1_s, y1_s), (x2_s, y2_s), color, 2)
                 label = f"ID: {track_id}"
                 cv2.putText(frame, label, (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+
             process.stdin.write(frame.tobytes())
+
     except (BrokenPipeError, IOError):
         logging.warning("[GPU 編碼器] 警告: FFmpeg 程序在寫入完成前已關閉管道。")
     except Exception as e:
@@ -272,6 +361,7 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
     finally:
         if process.stdin:
             process.stdin.close()
+
     stdout_output, stderr_output = process.communicate()
     end_time = time.time()
     encoding_duration = end_time - start_time
@@ -370,3 +460,4 @@ def encode_and_send_video(frame_data_list: list, notifier_instance, actual_fps: 
         notification_message = (
             f"**事件警報! ({event_type})**\n" f"於 `{timestamp_for_display}` 偵測到活動。\n" f"影片: {Config.ENCODE_HEIGHT}p @ {actual_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS")
         notifier_instance.schedule_notification(notification_message, file_path=save_path)
+
