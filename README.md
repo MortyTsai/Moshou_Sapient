@@ -1,8 +1,8 @@
-# MoshouSapient: AI 即時影像監控與分析系統
+# MoshouSapient: AI 智慧影像分析平台
 
-![alt text](https://img.shields.io/badge/status-work%20in%20progress-yellow) ![Python Version](https://img.shields.io/badge/python-3.11-blue)    ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-本專案是一個基於 Python 與 NVIDIA TensorRT 的高效能智慧保全系統，旨在探索即時影像處理、物件追蹤與人物重識別 (Re-ID) 技術的整合應用。系統能夠處理 RTSP 影像流，進行即時物件偵測，並在觸發特定事件時，提取人物外觀特徵向量進行持久化儲存，為後續的跨攝影機追蹤與資料檢索奠定基礎。
+MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。本專案旨在深度實踐即時影像處理、多物件追蹤 (MOT) 與長時序人物重識別 (Long-Term Re-ID) 等技術的整合應用。系統能夠處理 RTSP 影像流或本地影片檔案，執行即時物件偵測與分析，並在觸發特定事件時，將結構化的分析結果與特徵資料進行持久化儲存，為後續的進階查詢與跨攝影機分析奠定堅實基礎。
 
 ![](assets/demo_1.gif)   ![](assets/demo_3.gif)
 
@@ -10,23 +10,23 @@
 
 :construction: **本專案為學習與實踐導向，仍在持續開發中。**
 
-目前已完成核心的 Re-ID 功能與基礎架構重構，並成功實作了第一個高階行為分析模組。系統架構已為未來的功能擴展 (如多攝影機支援) 預留了空間。歡迎任何形式的建議與討論。
+目前已完成核心功能的 PoC (概念驗證)，並具備穩定的基礎架構與初步的行為分析能力。系統架構已為未來的功能擴展 (如多攝影機協同管理) 預留了清晰的介面。歡迎任何形式的建議與討論。
 
 ## 核心特性
 
--   **高效能推論管線**: 整合 **YOLO11** 與 **NVIDIA TensorRT** 引擎進行物件偵測，並利用 **NVENC** 硬體編碼加速影片處理，確保低延遲。
--   **穩定的物件追蹤**: 採用 **BOTSORT** 追蹤器，並將偵測與特徵提取流程解耦，手動管理追蹤器生命週期，提升管線的穩定性與可控性。
--   **長時人物重識別 (Long-Term Re-ID)**:
-    -   **特徵集畫廊 (Gallery of Feature Sets)**: 建立「全域人物畫廊」資料庫，為每個人物維護一個由多個特徵向量組成的集合，而非單一代表性特徵。
-    -   **魯棒的匹配邏輯**: 採用「穩定代表元聚類」演算法，能準確地在單一複雜事件中區分多個獨立人物，並透過「全域校準」將其與歷史資料庫進行比對，極大提升了在姿態、光照變化下的識別準確率。
--   **高階行為分析**:
-    -   **區域闖入與停留偵測 (ROI Dwell Time)**: 支援自訂多邊形感興趣區域 (ROI)，能夠即時偵測目標是否進入特定區域，並在停留時間超過預設閾值時觸發獨立的 `'dwell_alert'` 事件。
-    -   **事件切分機制**: 透過設定最大錄影時長，系統能夠在持續活動的場景中自動切分事件，確保長時間的活動能被記錄為多個獨立、可管理的事件片段。
--   **事件驅動的特徵持久化**: 系統能在偵測到人物或異常行為時觸發事件，並提取 Re-ID 特徵向量，使用 SQLAlchemy ORM 與 SQLite (WAL 模式) 將其與事件元數據一同高效存入資料庫。
--   **模組化與可擴展架構**: 採用標準化的 `src` 佈局，將所有原始碼封裝在一個可安裝的套件中。以 `CameraWorker` 類別封裝單一攝影機的處理邏輯，具備良好的可擴展性。
--   **遠端存取與可選通知**:
+-   **高效能推論管線 (High-Performance Inference Pipeline)**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎，並利用 **NVENC** 硬體編碼器加速事件錄影，以實現低延遲的即時處理能力。
+-   **魯棒的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法，並將偵測與特徵提取流程解耦，透過手動管理追蹤器生命週期，提升了整體管線的穩定性與可控性。
+-   **長時序人物重識別 (Long-Term Re-Identification)**:
+    -   **動態特徵庫 (Dynamic Feature Gallery)**: 為每個獨立個體建立並持續擴充其專屬的特徵向量集合，而非依賴單一的靜態特徵，從而形成一個動態更新的全域人物特徵庫。
+    -   **高準確度匹配邏輯**: 透過事件內的聚類分析與跨事件的全域比對，能準確地區分複雜場景中的多個目標，並有效應對姿態、光照變化與短暫遮蔽所帶來的挑戰。
+-   **高階行為分析 (Advanced Behavioral Analysis)**:
+    -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援使用者自訂多邊形感興趣區域 (ROI)，能夠即時偵測目標是否進入特定區域，並在停留時間超過預設閾值時，觸發獨立的 `'dwell_alert'` 事件。
+    -   **事件切分機制 (Event Segmentation)**: 透過設定最大錄影時長，系統能夠在持續活動的場景中自動切分事件，確保長時間的活動能被記錄為多個獨立、可管理的事件片段。
+-   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到人物或異常行為時觸發事件，並使用 SQLAlchemy ORM 將 Re-ID 特徵向量與事件元數據，以結構化的方式高效存入 SQLite 資料庫 (WAL 模式)。
+-   **模組化與可擴展架構 (Modular & Scalable Architecture)**: 採用標準化的 `src` 專案佈局，將所有原始碼封裝在一個可安裝的套件中。以 `CameraWorker` 類別抽象化單一攝影機的處理邏輯，為未來的多攝影機擴展提供了良好的基礎。
+-   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
-    -   透過 **Discord Bot** 非同步推送即時警報，此功能可透過設定檔完全啟用或禁用。
+    -   可選整合 **Discord Bot**，以非同步方式推送即時警報。
 
 ## 技術棧
 
@@ -39,8 +39,6 @@
 
 ## 系統檔案結構
 ```
-## 系統檔案結構
-
 MoshouSapient/                          # 專案根目錄
 │
 ├── .env.example                        # 環境變數設定檔範本
@@ -179,9 +177,9 @@ MoshouSapient/                          # 專案根目錄
     -   如果啟用了 Discord，檢查是否收到通知。
     -   檢查 Web 儀表板是否出現新的事件紀錄。
 
-## 未來可能的發展方向
+## 發展藍圖
 
-作為一個學習與探索性質的專案，以下是一些未來可能的研究與開發方向。這些並非確定的開發計畫，而是基於現有架構的潛在擴展思路：
+作為一個學習與探索性質的專案，以下是未來可能的研究與開發方向：
 
 -   **行為分析與異常偵測**: 在已實現的 ROI 停留偵測基礎上，繼續開發如「虛擬警戒線跨越偵測」、「方向判斷」等更複雜的分析模組。
 -   **進階資料庫查詢**: 探索基於 Re-ID 特徵向量的相似度搜尋，以實現特定人物的歷史事件檢索（例如「顯示這個人今天所有出現過的片段」）。
@@ -202,4 +200,4 @@ MoshouSapient/                          # 專案根目錄
 
 ## License
 
-本專案採用 [AGPL-3.0 License](https://www.gnu.org/licenses/agpl-3.0.html) 授權。```
+本專案採用 [AGPL-3.0 License](https://www.gnu.org/licenses/agpl-3.0.html) 授權。
