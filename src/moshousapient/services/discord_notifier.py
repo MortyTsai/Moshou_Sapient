@@ -1,4 +1,4 @@
-# discord_notifier.py
+# src/moshousapient/services/discord_notifier.py
 import discord
 import asyncio
 import threading
