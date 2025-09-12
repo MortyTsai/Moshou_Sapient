@@ -1,24 +1,21 @@
-# main.py
+# src/moshousapient/core/main.py
+
 import logging
 import threading
 import sys
 import torch
-import os
-from ultralytics import YOLO
-import numpy as np
 from typing import Optional, Dict, Any
-from .config import Config
-from .logging_setup import setup_logging
-from .database import init_db
-from .web.app import create_flask_app
-from .components.camera_worker import CameraWorker
-from .components.discord_notifier import DiscordNotifier
-from .components.runners import RTSPRunner, FileRunner, BaseRunner
+from ..config import Config
+from ..logging_setup import setup_logging
+from ..database import init_db
+from ..web.app import create_flask_app
+from .camera_worker import CameraWorker
+from ..services.discord_notifier import DiscordNotifier
+from .runners import RTSPRunner, FileRunner, BaseRunner
+
 
 def pre_flight_checks():
-    """
-    執行啟動前的環境檢查。
-    """
+    """執行啟動前的環境檢查。"""
     logging.info("[系統] 執行啟動前環境檢查...")
     if not torch.cuda.is_available():
         logging.critical("-" * 60)
@@ -32,27 +29,27 @@ def pre_flight_checks():
     logging.info(f"[系統] CUDA 設備檢查通過。偵測到 GPU: {torch.cuda.get_device_name(0)}")
     return True
 
-def get_camera_config() -> Optional[Dict[str, Any]]:
-    """
-    根據 .env 設定解析並回傳攝影機設定字典。
-    如果設定無效，則回傳 None。
-    """
 
+def get_camera_config() -> Optional[Dict[str, Any]]:
+    """根據 .env 設定解析並回傳攝影機設定字典。"""
     if Config.VIDEO_SOURCE_TYPE == "FILE":
+        if not Config.VIDEO_FILE_PATH:
+            logging.critical("[嚴重錯誤] 影像來源設定為 FILE，但未提供 VIDEO_FILE_PATH。")
+            return None
         logging.info(f"[系統] 影像來源模式: 本地檔案 ({Config.VIDEO_FILE_PATH})")
         source_uri = Config.VIDEO_FILE_PATH
-        source_name = os.path.basename(source_uri)
-
+        from pathlib import Path
+        source_name = Path(source_uri).name
     elif Config.VIDEO_SOURCE_TYPE == "RTSP":
-        logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
         if not Config.RTSP_URL:
             logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
             return None
+        logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
         source_uri = Config.RTSP_URL
         source_name = "RTSP-Cam"
-
     else:
-        logging.critical(f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
+        logging.critical(
+            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
         return None
 
     return {
@@ -60,6 +57,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         "rtsp_url": source_uri,
         "transport_protocol": "udp" if Config.VIDEO_SOURCE_TYPE == "RTSP" else "tcp"
     }
+
 
 def main():
     # 1. 初始化
@@ -69,25 +67,25 @@ def main():
     if not pre_flight_checks():
         sys.exit(1)
 
-    Config.ensure_captures_dir_exists()
     init_db()
-
     Config.initialize_dynamic_settings()
 
     # 2. 載入模型
-    logging.info(f"[YOLO] 正在從 {Config.MODEL_PATH} 載入 TensorRT 模型...")
     try:
+        from ultralytics import YOLO
+        import numpy as np
+        logging.info(f"[YOLO] 正在從 {Config.MODEL_PATH} 載入 TensorRT 模型...")
         model = YOLO(Config.MODEL_PATH, task='detect')
         warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False)
         logging.info("[YOLO] TensorRT 模型已成功載入並預熱。")
+
         logging.info(f"[Re-ID] 正在載入 {Config.REID_MODEL_PATH} 作為特徵提取器...")
         reid_model = YOLO(Config.REID_MODEL_PATH)
         reid_model.predict(warmup_frame, device=0, verbose=False)
         logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
-
     except Exception as e:
-        logging.critical(f"[YOLO] 嚴重錯誤: 無法載入 TensorRT 模型。{e}", exc_info=True)
+        logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
         return
 
     # 3. 初始化通知器
@@ -141,6 +139,3 @@ def main():
         logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
         if notifier:
             notifier.stop()
-
-if __name__ == "__main__":
-    main()
