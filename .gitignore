@@ -1,29 +1,35 @@
-# 虛擬環境
+# .gitignore
+
+# --- 虛擬環境 ---
 venv/
 *.venv/
 .venv/
 
-# Python 快取檔案
+# --- Python 快取檔案 ---
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# 敏感資訊的環境變數檔案
+# --- 敏感資訊的環境變數檔案 ---
 .env
+*.env
+
+# --- 執行時產生的日誌檔案 ---
 *.log
 
-# 執行時產生的資料 (資料庫、日誌等)
+# --- 執行時產生的資料 (資料庫、錄影等) ---
 data/
+!data/video_samples/
+data/video_samples/*.mp4
+# 開箱即測的檔案
+!data/video_samples/small_test.mp4
 
-# 執行時產生的 AI 模型引擎
-*.engine
-*.onnx
-
-# 執行時錄製的影片
-captures/
-
-# IDE/編輯器設定檔
+# --- IDE/編輯器設定檔 ---
 .idea/
 .vscode/
 *.swp
+
+# --- AI 模型引擎 ---
+*.engine
+*.onnx
