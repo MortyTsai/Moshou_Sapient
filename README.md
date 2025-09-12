@@ -4,7 +4,7 @@
 
 MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。本專案旨在深度實踐即時影像處理、多物件追蹤 (MOT) 與長時序人物重識別 (Long-Term Re-ID) 等技術的整合應用。系統能夠處理 RTSP 影像流或本地影片檔案，執行即時物件偵測與分析，並在觸發特定事件時，將結構化的分析結果與特徵資料進行持久化儲存，為後續的進階查詢與跨攝影機分析奠定堅實基礎。
 
-![](assets/demo_1.gif)   ![](assets/demo_4.gif)
+![](docs/assets/demo_1.gif)   ![](docs/assets/demo_4.gif)
 
 ## 專案狀態
 
@@ -25,7 +25,7 @@ MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的�
     -   **事件優先級系統 (Event Priority System)**: 內建 `tripwire_alert` > `dwell_alert` > `person_detected` 的事件優先級機制。當更高優先級的行為發生時，可將正在錄製中的低優先級事件「升級」，確保最終儲存的事件類型最具代表性。
     -   **事件切分機制 (Event Segmentation)**: 透過設定最大錄影時長，系統能夠在持續活動的場景中自動切分事件，確保長時間的活動能被記錄為多個獨立、可管理的事件片段。
 -   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到人物或異常行為時觸發事件，並使用 SQLAlchemy ORM 將 Re-ID 特徵向量與事件元數據，以結構化的方式高效存入 SQLite 資料庫 (WAL 模式)。
--   **模組化與可擴展架構 (Modular & Scalable Architecture)**: 採用標準化的 `src` 專案佈局，將所有原始碼封裝在一個可安裝的套件中。以 `CameraWorker` 類別抽象化單一攝影機的處理邏輯，為未來的多攝影機擴展提供了良好的基礎。
+-   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services` 等多個職責明確的子套件，實現了高度的內聚與解耦，為未來的擴展提供了極佳的靈活性。
 -   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
     -   可選整合 **Discord Bot**，以非同步方式推送即時警報。
@@ -37,7 +37,8 @@ MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的�
 -   **資料庫**: SQLite, SQLAlchemy (ORM)
 -   **Web 後端**: Flask
 -   **影像處理**: FFmpeg, OpenCV-Python
--   **其他**: python-dotenv, PyYAML
+-   **設定管理**: Pydantic-Settings, PyYAML
+-   **其他**: python-dotenv
 
 ## 系統檔案結構
 ```
@@ -49,9 +50,14 @@ MoshouSapient/                          # 專案根目錄
 ├── requirements.txt                    # Python 依賴套件列表
 │
 ├── configs/                            # 存放所有靜態設定檔
+│   ├── behavior_analysis.yaml          # 行為分析規則 (ROI, 警戒線)
 │   └── custom_botsort.yaml             # BoT-SORT 追蹤器客製化參數
 │
-├── data/                               # (動態生成) 存放執行時資料 (如資料庫)
+├── data/                               # 存放專案資料
+│   └── video_samples/                  # 存放 FILE 模式的範例影片
+│
+├── docs/                               # 存放所有文件與相關資源
+│   └── assets/                         # 存放 README 中使用的圖片
 │
 ├── models/                             # 存放所有 AI 模型資產
 │   ├── yolo11s.pt                      # (需下載) PyTorch 格式的偵測模型
@@ -66,31 +72,44 @@ MoshouSapient/                          # 專案根目錄
         ├── __init__.py                 # 將目錄標記為 Python 套件
         ├── __main__.py                 # 套件執行入口 (python -m moshousapient)
         │
-        ├── components/                 # 核心功能元件子套件
-        │   ├── __init__.py             # 將目錄標記為 Python 子套件
-        │   ├── camera_worker.py        # 管理單一攝影機的核心類別
-        │   ├── discord_notifier.py     # Discord Bot 通知模組
-        │   ├── event_processor.py      # 核心 AI 處理管線 (偵測、追蹤、Re-ID、行為分析)
-        │   ├── runners.py              # 執行策略模組 (RTSP/File 模式)
+        ├── core/                       # 核心業務邏輯與協調器
+        │   ├── __init__.py
+        │   ├── camera_worker.py        # 管理單一攝影機管線的協調器
+        │   ├── main.py                 # 應用程式主邏輯
+        │   └── runners.py              # 執行策略模組 (RTSP/File 模式)
+        │
+        ├── processors/                 # 持續性資料流處理單元
+        │   ├── __init__.py
+        │   ├── base_processor.py       # 處理器抽象基礎類別
+        │   ├── event_processor.py      # 事件偵測與狀態管理處理器
+        │   └── inference_processor.py  # AI 推論處理器
+        │
+        ├── services/                   # 事件驅動型服務
+        │   ├── __init__.py
+        │   ├── discord_notifier.py     # Discord Bot 通知服務
+        │   └── video_recorder.py       # 影片錄製與資料庫儲存服務
+        │
+        ├── streams/                    # 資料來源讀取模組
+        │   ├── __init__.py
         │   └── video_streamer.py       # FFmpeg 影像流讀取模組
         │
         ├── utils/                      # 通用工具函式子套件
-        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── __init__.py
         │   ├── geometry_utils.py       # 通用幾何計算工具
         │   ├── reid_utils.py           # Re-ID 相關工具函式
         │   └── video_utils.py          # 影片元數據讀取工具
         │
         ├── web/                        # Web 儀表板子套件
-        │   ├── __init__.py             # 將目錄標記為 Python 子套件
+        │   ├── __init__.py
         │   ├── app.py                  # Flask 應用程式與路由定義
         │   └── templates/              # Web 儀表板的 HTML 樣板
         │       └── index.html          # 儀表板主頁面樣板
         │
-        ├── config.py                   # 中央設定類別與路徑管理
-        ├── database.py                 # SQLAlchemy 資料庫初始化與 Session 管理
-        ├── logging_setup.py            # 全域日誌 (Logging) 設定模組
-        ├── main.py                     # 專案主程式邏輯
-        └── models.py                   # 資料庫 ORM 模型定義
+        ├── config.py                   # 應用程式初始化協調器
+        ├── database.py                 # 資料庫設定與 Session 管理
+        ├── logging_setup.py            # 全域日誌設定模組
+        ├── models.py                   # 資料庫 ORM 模型定義
+        └── settings.py                 # Pydantic 靜態設定管理
 ```
 
 ## 環境準備
@@ -149,24 +168,20 @@ MoshouSapient/                          # 專案根目錄
 
     # Discord Bot 功能總開關 (True/False)
     DISCORD_ENABLED=False
-
-    # Discord Bot Credentials (僅在 DISCORD_ENABLED=True 時需要)
-    DISCORD_TOKEN="YourDiscordBotTokenHere"
-    DISCORD_CHANNEL_ID="YourChannelIDHere"
+    # ... (其他 Discord 設定)
 
     # 影像來源類型: "RTSP" 或 "FILE"
-    VIDEO_SOURCE_TYPE="RTSP"
+    VIDEO_SOURCE_TYPE="FILE"
 
     # RTSP 模式所需憑證
-    # 請在此填入您攝影機的完整 RTSP URL。
     RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
 
     # FILE 模式所需路徑 (相對於專案根目錄)
-    VIDEO_FILE_PATH="videos/input.mp4"
+    VIDEO_FILE_PATH="data/video_samples/your_test_video.mp4"
     ```
 
-2.  **微調追蹤器 (可選)**:
-    您可以在 `configs/custom_botsort.yaml` 檔案中微調追蹤演算法的相關參數。
+2.  **設定行為分析規則 (重要)**:
+    打開 `configs/behavior_analysis.yaml` 檔案，根據您的場景需求，設定感興趣區域 (ROI) 和虛擬警戒線 (Tripwire) 的座標與規則。檔案內有詳細的註解說明。
 
 3.  **啟動系統**:
     在專案**根目錄**下，執行以下指令：
@@ -175,7 +190,7 @@ MoshouSapient/                          # 專案根目錄
     ```
 
 4.  **驗證**:
-    -   打開瀏覽器，訪問 Web 儀表板： `http://127.0.0.1:5000`
+    -   打開瀏覽器，訪問 Web 儀表板： `http://1227.0.0.1:5000`
     -   觸發事件（例如，讓人物出現在攝影機畫面中，或使用包含人物的影片檔案）。
     -   如果啟用了 Discord，檢查是否收到通知。
     -   檢查 Web 儀表板是否出現新的事件紀錄。
