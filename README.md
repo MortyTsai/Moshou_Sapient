@@ -25,6 +25,9 @@ MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的�
     -   **事件優先級系統 (Event Priority System)**: 內建 `tripwire_alert` > `dwell_alert` > `person_detected` 的事件優先級機制。當更高優先級的行為發生時，可將正在錄製中的低優先級事件「升級」，確保最終儲存的事件類型最具代表性。
     -   **事件切分機制 (Event Segmentation)**: 透過設定最大錄影時長，系統能夠在持續活動的場景中自動切分事件，確保長時間的活動能被記錄為多個獨立、可管理的事件片段。
 -   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到人物或異常行為時觸發事件，並使用 SQLAlchemy ORM 將 Re-ID 特徵向量與事件元數據，以結構化的方式高效存入 SQLite 資料庫 (WAL 模式)。
+-   **靈活的影片輸出設定 (Flexible Video Output Configuration)**:
+    -   **幀率控制**: 使用者可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片降採樣至指定的目標幀率 (`TARGET` 模式)，以在流暢度與檔案大小間取得平衡。
+    -   **編碼策略**: 提供兩種編碼模式供選擇。「品質」(`QUALITY`) 模式優先保證恆定的視覺品質，而「均衡」(`BALANCED`) 模式則將影片控制在指定的平均位元率，以實現可預測的檔案大小，更適合長時間監控的儲存需求。
 -   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services` 等多個職責明確的子套件，實現了高度的內聚與解耦，為未來的擴展提供了極佳的靈活性。
 -   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
@@ -161,36 +164,39 @@ MoshouSapient/                          # 專案根目錄
 ## 專案設定與執行
 
 1.  **設定環境變數**:
-    在專案根目錄下，將 `.env.example` 複製一份並重新命名為 `.env`。然後根據您的需求填寫設定：
+    在專案根目錄下，將 `.env.example` 複製一份並重新命名為 `.env`。此檔案用於集中管理所有環境特定的或敏感的設定。如果您想使用系統預設值，可以將 `.env` 中的對應行註解掉。
 
     ```env
-    # .env
+    # .env 範例
 
-    # Discord Bot 功能總開關 (True/False)
-    DISCORD_ENABLED=False
-    # ... (其他 Discord 設定)
-
-    # 影像來源類型: "RTSP" 或 "FILE"
+    # --- 影像來源設定 (必要) ---
     VIDEO_SOURCE_TYPE="FILE"
+    VIDEO_FILE_PATH="data/video_samples/input.mp4"
+    RTSP_URL=""
 
-    # RTSP 模式所需憑證
-    RTSP_URL="rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
+    # --- 事件影片幀率設定 (可選, 預設為 TARGET, 30.0 FPS) ---
+    VIDEO_FPS_MODE="TARGET"
+    TARGET_FPS=30.0
 
-    # FILE 模式所需路徑 (相對於專案根目錄)
-    VIDEO_FILE_PATH="data/video_samples/your_test_video.mp4"
+    # --- 事件影片編碼設定 (可選, 預設為 BALANCED, 2.0 Mbps) ---
+    VIDEO_ENCODING_MODE="BALANCED"
+    TARGET_BITRATE_MBPS=2.0
     ```
 
 2.  **設定行為分析規則 (重要)**:
     打開 `configs/behavior_analysis.yaml` 檔案，根據您的場景需求，設定感興趣區域 (ROI) 和虛擬警戒線 (Tripwire) 的座標與規則。檔案內有詳細的註解說明。
 
-3.  **啟動系統**:
+3.  **(可選) 微調追蹤器**:
+    若在特定場景下追蹤效果不佳（如目標頻繁被遮擋），可編輯 `configs/custom_botsort.yaml` 來微調追蹤演算法的參數。檔案內有各參數的詳細說明。
+
+4.  **啟動系統**:
     在專案**根目錄**下，執行以下指令：
     ```bash
     python -m moshousapient
     ```
 
-4.  **驗證**:
-    -   打開瀏覽器，訪問 Web 儀表板： `http://1227.0.0.1:5000`
+5.  **驗證**:
+    -   打開瀏覽器，訪問 Web 儀表板： `http://127.0.0.1:5000`
     -   觸發事件（例如，讓人物出現在攝影機畫面中，或使用包含人物的影片檔案）。
     -   如果啟用了 Discord，檢查是否收到通知。
     -   檢查 Web 儀表板是否出現新的事件紀錄。
