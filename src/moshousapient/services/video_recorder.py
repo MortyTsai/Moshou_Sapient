@@ -16,25 +16,36 @@ from moshousapient.utils.reid_utils import find_best_match_in_gallery, cosine_si
 
 
 def encode_and_send_video(
-    frame_data_list: list,
-    notifier_instance,
-    actual_fps: float,
-    reid_features_list: list,
-    event_type: str = "person_detected"
+        frame_data_list: list,
+        notifier_instance,
+        actual_fps: float,
+        reid_features_list: list,
+        event_type: str = "person_detected",
+        # --- 新增參數 ---
+        video_fps_mode: str = "SOURCE",
+        target_fps: float = 30.0
 ):
     """對指定的影像幀列表進行編碼、儲存，並處理 Re-ID 和通知。"""
+
+    # print(f"DEBUG [video_recorder.py]: Function received video_fps_mode = {video_fps_mode}")
+
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS，取消編碼。")
         return
 
-    # 根據 FPS 模式決定是否降採樣
-    if Config.VIDEO_FPS_MODE == "TARGET" and actual_fps > Config.TARGET_FPS > 0:
-        logging.info(f"[編碼器] 偵測到 TARGET 模式。原始幀率 {actual_fps:.2f} FPS 高於目標 {Config.TARGET_FPS} FPS。執行降採樣...")
-        step = round(actual_fps / Config.TARGET_FPS)
+    # --- 核心修正：根據傳入的參數決定是否降採樣 ---
+    if video_fps_mode == "TARGET" and target_fps > 0:
+        logging.info(f"[編碼器] 偵測到 TARGET 模式。目標幀率: {target_fps} FPS。")
+        output_fps = target_fps
+        # 根據實際幀率和目標幀率計算採樣步長
+        step = round(actual_fps / output_fps) if actual_fps > output_fps else 1
+        # 確保 step 至少為 1
+        step = max(1, step)
         sampled_frame_data_list = frame_data_list[::step]
-        output_fps = actual_fps / step
+        logging.info(f"原始幀率: {actual_fps:.2f} FPS, 採樣步長: {step}, "
+                     f"輸出幀數: {len(sampled_frame_data_list)}")
     else:
-        logging.info(f"[編碼器] 偵測到 SOURCE 模式。將使用原始幀率 {actual_fps:.2f} FPS。")
+        logging.info(f"[編碼器] 偵測到 SOURCE 模式。將使用系統實際處理幀率 {actual_fps:.2f} FPS。")
         sampled_frame_data_list = frame_data_list
         output_fps = actual_fps
 
