@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # 範例: "rtsp://admin:password123@192.168.1.100:554/stream1"
     RTSP_URL: Optional[str] = None
 
+    # 【RTSP 模式專用】RTSP 的傳輸協定。
+    # 可選值: "UDP", "TCP"。
+    # "UDP": 延遲較低，但可能因網路不穩定而丟失封包，適用於網路品質良好的環境。(推薦)
+    # "TCP": 延遲較高，但傳輸可靠，適用於網路品質較差的環境。
+    RTSP_TRANSPORT_PROTOCOL: str = "UDP"
+
     # --- Discord Bot 通知設定 ---
     # 是否啟用 Discord 通知功能。設定為 True 可在偵測到事件時發送訊息。
     DISCORD_ENABLED: bool = False
@@ -81,7 +87,7 @@ class Settings(BaseSettings):
     # 輸出影片的幀率模式。可選值: "TARGET", "SOURCE"
     # "TARGET": 系統會將影片降採樣至下方設定的 TARGET_FPS，有助於節省儲存空間。 (推薦)
     # "SOURCE": 系統會保留影片的原始幀率。
-    VIDEO_FPS_MODE: str = "SOURCE"
+    VIDEO_FPS_MODE: str = "TARGET"
 
     # 在 VIDEO_FPS_MODE 設定為 "TARGET" 時，所使用的目標幀率 (FPS)。
     # 較高的 FPS 會使影片更流暢，但檔案大小也會更大。
