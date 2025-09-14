@@ -32,6 +32,7 @@ def pre_flight_checks():
 
 def get_camera_config() -> Optional[Dict[str, Any]]:
     """根據 .env 設定解析並回傳攝影機設定字典。"""
+    transport_protocol: str
     if Config.VIDEO_SOURCE_TYPE == "FILE":
         if not Config.VIDEO_FILE_PATH:
             logging.critical("[嚴重錯誤] 影像來源設定為 FILE，但未提供 VIDEO_FILE_PATH。")
@@ -40,6 +41,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         source_uri = Config.VIDEO_FILE_PATH
         from pathlib import Path
         source_name = Path(source_uri).name
+        transport_protocol = "tcp"
     elif Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not Config.RTSP_URL:
             logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
@@ -47,15 +49,22 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
         source_uri = Config.RTSP_URL
         source_name = "RTSP-Cam"
+        protocol_setting = Config.RTSP_TRANSPORT_PROTOCOL.lower()
+        if protocol_setting not in ["udp", "tcp"]:
+            logging.warning(f"[設定警告] 無效的 RTSP_TRANSPORT_PROTOCOL: '{protocol_setting}'。將使用預設值 'udp'。")
+            transport_protocol = "udp"
+        else:
+            transport_protocol = protocol_setting
     else:
         logging.critical(
-            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
+            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env "
+            f"中設定為 'RTSP' 或 'FILE'。")
         return None
 
     return {
         "name": f"Worker-{source_name}",
         "rtsp_url": source_uri,
-        "transport_protocol": "udp" if Config.VIDEO_SOURCE_TYPE == "RTSP" else "tcp"
+        "transport_protocol": transport_protocol
     }
 
 
