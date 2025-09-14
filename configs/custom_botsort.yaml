@@ -1,19 +1,48 @@
-# MoshouSapient 客製化追蹤器設定檔
-# 此檔案為 BoT-SORT 追蹤器提供了一套完整的參數。
+# configs/custom_botsort.yaml
 
-#tracker_type: botsort
+# ===================================================================
+# MoshouSapient 客製化追蹤器設定檔 (BoT-SORT)
+# ===================================================================
+#
+# 此檔案為 BoT-SORT 追蹤器提供了一套完整的參數。
+# 調整這些參數可以優化在特定場景下的追蹤穩定性與準確性。
+#
+
+# 追蹤器類型，目前固定為 botsort。
+tracker_type: botsort
 
 # --- 為維持相容性而保留的官方設定參數 ---
+# 官方參數，通常不需要修改。
 track_low_thresh: 0.1
 match_thresh: 0.8
 fuse_score: True
 gmc_method: sparseOptFlow
 
 # --- 為增強 Re-ID 穩定性而進行的參數覆寫 ---
-with_reid: True               # <-- 啟用 Re-ID 模組
-model: models/yolo11s-cls.pt  # <-- 選擇 Re-ID 模型
-track_high_thresh: 0.4        # <-- 首次關聯閾值
-new_track_thresh: 0.45        # <-- 新軌跡建立閾值
-track_buffer: 70              # <-- 軌跡緩衝區
-proximity_thresh: 0.5         # <-- 鄰近閾值
-appearance_thresh: 0.25       # <-- 外觀匹配閾值
+# 核心設定：是否啟用 Re-ID 模組進行特徵比對，以處理長時間遮擋和身份重認。
+# 強烈建議保持 True。
+with_reid: True
+
+# Re-ID 模型檔案的路徑。
+model: models/yolo11s-cls.pt
+
+# 首次關聯閾值：一個偵測框要被考慮與現有軌跡關聯的最低信心分數。
+# 較高的值更嚴格，可以減少初始的錯誤匹配。
+track_high_thresh: 0.4
+
+# 新軌跡建立閾值：一個偵測框在沒有匹配到任何現有軌跡時，要被建立為一條新軌跡的最低信心分數。
+# 應略高於 track_high_thresh，以防止產生過多零碎的軌跡。
+new_track_thresh: 0.45
+
+# 軌跡緩衝區 (生命週期)：一條軌跡在畫面中消失後，系統會為其保留多少幀。
+# 這是處理短暫遮擋最重要的參數。如果目標經常被短暫遮擋，可以適當增加此值。
+# 例如，在 30 FPS 下，70 幀約等於 2.3 秒。
+track_buffer: 70
+
+# 鄰近閾值 (IOU 匹配)：在第一階段匹配中，使用 IOU (交併比) 進行匹配的閾值。
+# 衡量的是位置上的重疊程度。
+proximity_thresh: 0.5
+
+# 外觀匹配閾值 (Re-ID 匹配)：在第二階段匹配中，使用 Re-ID 特徵向量的餘弦相似度進行匹配的閾值。
+# 數值越高，代表對特徵的相似度要求越嚴格。
+appearance_thresh: 0.25
