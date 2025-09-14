@@ -1,5 +1,4 @@
 # src/moshousapient/core/runners.py
-
 import logging
 import threading
 import time
@@ -13,12 +12,7 @@ class BaseRunner(ABC):
     """執行策略的抽象基礎類別。"""
 
     def __init__(self, workers: List[Any], notifier):
-        """
-        初始化基礎執行器。
-
-        :param workers: 一個 CameraWorker 物件的列表。
-        :param notifier: 一個通知器實例。
-        """
+        """初始化基礎執行器。"""
         self.workers = workers
         self.notifier = notifier
         self.stop_event = threading.Event()
@@ -79,10 +73,18 @@ class FileRunner(BaseRunner):
             while worker.is_alive():
                 time.sleep(1)
 
-        logging.info("[系統] 影片來源處理完畢。給予下游處理器寬限期以完成剩餘任務...")
+        logging.info("[系統] 影片來源處理完畢。等待所有事件錄影執行緒完成...")
 
-        # 給予一個固定的寬限期，確保佇列中的剩餘幀能被完全處理
-        grace_period = Config.POST_EVENT_SECONDS + 5.0  # 比後期緩衝稍長的時間
-        time.sleep(grace_period)
+        # 【新邏輯】智慧等待：持續檢查是否有錄影執行緒仍在活動
+        while True:
+            active_recorders = [
+                r for w in self.workers for r in w.active_recorders if r.is_alive()
+            ]
+            if not active_recorders:
+                logging.info("[系統] 所有事件錄影已處理完畢。")
+                break
+
+            logging.info(f"[系統] 仍在等待 {len(active_recorders)} 個錄影執行緒完成...")
+            time.sleep(2)
 
         logging.info("[系統] 所有任務已完成。觸發系統最終關閉程序。")
