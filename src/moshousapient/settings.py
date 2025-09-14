@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # 【RTSP 模式專用】攝影機的 RTSP 串流網址。
     # 請務必填寫完整且正確的網址，包含使用者名稱、密碼與 IP 位址。
     # 範例: "rtsp://admin:password123@192.168.1.100:554/stream1"
-    RTSP_URL: Optional[str] = "rtsp://YourCameraUsername:YourCameraPassword@YourCameraIPAddress:554/stream1"
+    RTSP_URL: Optional[str] = None
 
     # --- Discord Bot 通知設定 ---
     # 是否啟用 Discord 通知功能。設定為 True 可在偵測到事件時發送訊息。
@@ -73,13 +73,29 @@ class Settings(BaseSettings):
     # 這能有效防止因人物短暫停留或重複進出而產生大量零碎的錄影檔案。
     COOLDOWN_PERIOD: float = 5.0
 
-    # 儲存的事件影片的目標幀率 (FPS)。
-    # 較高的 FPS 會使影片更流暢，但檔案大小也會更大。
-    TARGET_FPS: float = 30.0
-
     # 單一事件錄影的最長持續時間（秒）。
     # 這是一個安全機制，防止因意外情況導致錄影程序無法正常結束，從而產生過大的影片檔案。
     MAX_EVENT_DURATION: float = 20.0
+
+    # --- 事件影片幀率設定 - --
+    # 輸出影片的幀率模式。可選值: "TARGET", "SOURCE"
+    # "TARGET": 系統會將影片降採樣至下方設定的 TARGET_FPS，有助於節省儲存空間。 (推薦)
+    # "SOURCE": 系統會保留影片的原始幀率。
+    VIDEO_FPS_MODE: str = "SOURCE"
+
+    # 在 VIDEO_FPS_MODE 設定為 "TARGET" 時，所使用的目標幀率 (FPS)。
+    # 較高的 FPS 會使影片更流暢，但檔案大小也會更大。
+    TARGET_FPS: float = 30.0
+
+    # --- 事件影片編碼設定 ---
+    # 輸出影片的編碼模式。可選值: "QUALITY", "BALANCED"
+    # "QUALITY":  恆定品質模式。優先保證每一幀的視覺品質，但檔案大小會因畫面複雜度而大幅波動。(預設)
+    # "BALANCED": 均衡模式。將影片的平均位元率控制在一個目標值附近，檔案大小更可預測，適合絕大多數場景。
+    VIDEO_ENCODING_MODE: str = "BALANCED"
+
+    # 在編碼模式為 "BALANCED" 時，所使用的目標平均位元率 (單位：Mbps)。
+    # 較高的值會帶來更好的畫質和更大的檔案大小。對於 1080p 影片，2-4 Mbps 是一個合理的範圍。
+    TARGET_BITRATE_MBPS: float = 2.0
 
     # --- 影像尺寸設定 ---
     # 最終儲存的影片檔案的解析度（寬度）。
