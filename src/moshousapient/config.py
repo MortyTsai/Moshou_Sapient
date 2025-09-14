@@ -11,6 +11,7 @@ from shapely.errors import ShapelyError
 from .settings import settings, PROJECT_ROOT
 from .utils.video_utils import get_video_resolution
 
+# print(f"DEBUG [config.py]: Initial settings.VIDEO_FPS_MODE = {settings.VIDEO_FPS_MODE}")
 
 class Config:
     """
@@ -22,6 +23,7 @@ class Config:
     VIDEO_SOURCE_TYPE = settings.VIDEO_SOURCE_TYPE.upper()
     VIDEO_FILE_PATH = settings.VIDEO_FILE_PATH
     RTSP_URL = settings.RTSP_URL
+    RTSP_TRANSPORT_PROTOCOL = settings.RTSP_TRANSPORT_PROTOCOL.upper()
     DISCORD_ENABLED = settings.DISCORD_ENABLED
     DISCORD_TOKEN = settings.DISCORD_TOKEN
     DISCORD_CHANNEL_ID = settings.DISCORD_CHANNEL_ID
