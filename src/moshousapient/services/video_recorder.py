@@ -1,16 +1,4 @@
 # src/moshousapient/services/video_recorder.py
-
-"""
-事件影片處理器
-
-此模組包含處理已觸發事件的後續動作，主要職責包括：
-1. 使用 NVIDIA GPU 硬體加速，將事件期間的影像幀編碼為 MP4 影片檔案。
-2. 在影片上繪製視覺化疊加層（如追蹤框、ROI 區域、警戒線）。
-3. 執行 Re-ID 特徵聚類與比對，識別事件中的人物。
-4. 將事件記錄寫入資料庫。
-5. 透過通知器（如 Discord）發送警報。
-"""
-
 import logging
 import os
 import pickle
@@ -28,23 +16,32 @@ from moshousapient.utils.reid_utils import find_best_match_in_gallery, cosine_si
 
 
 def encode_and_send_video(
-        frame_data_list: list,
-        notifier_instance,
-        actual_fps: float,
-        reid_features_list: list,
-        event_type: str = "person_detected"
+    frame_data_list: list,
+    notifier_instance,
+    actual_fps: float,
+    reid_features_list: list,
+    event_type: str = "person_detected"
 ):
-    """
-    對指定的影像幀列表進行編碼、儲存，並處理 Re-ID 和通知。
-    """
+    """對指定的影像幀列表進行編碼、儲存，並處理 Re-ID 和通知。"""
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS，取消編碼。")
         return
 
-    num_frames = len(frame_data_list)
+    # 根據 FPS 模式決定是否降採樣
+    if Config.VIDEO_FPS_MODE == "TARGET" and actual_fps > Config.TARGET_FPS > 0:
+        logging.info(f"[編碼器] 偵測到 TARGET 模式。原始幀率 {actual_fps:.2f} FPS 高於目標 {Config.TARGET_FPS} FPS。執行降採樣...")
+        step = round(actual_fps / Config.TARGET_FPS)
+        sampled_frame_data_list = frame_data_list[::step]
+        output_fps = actual_fps / step
+    else:
+        logging.info(f"[編碼器] 偵測到 SOURCE 模式。將使用原始幀率 {actual_fps:.2f} FPS。")
+        sampled_frame_data_list = frame_data_list
+        output_fps = actual_fps
+
+    num_frames = len(sampled_frame_data_list)
     logging.info(
         f">>> [GPU 編碼器] 收到 {num_frames} 幀影像 (事件類型: {event_type})，"
-        f"開始以 {actual_fps:.2f} FPS 進行硬體編碼..."
+        f"開始以 {output_fps:.2f} FPS 進行硬體編碼..."
     )
 
     start_time = time.time()
@@ -56,12 +53,24 @@ def encode_and_send_video(
     save_path = os.path.join(Config.CAPTURES_DIR, filename)
     frame_size_str = f'{Config.ENCODE_WIDTH}x{Config.ENCODE_HEIGHT}'
 
+    # --- 【核心邏輯】動態構建 FFmpeg 命令 ---
     command = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', frame_size_str,
-        '-pix_fmt', 'bgr24', '-r', str(actual_fps), '-i', '-', '-c:v', 'hevc_nvenc',
-        '-preset', 'p6', '-rc', 'vbr', '-cq', '30', '-b:v', '1M', '-maxrate', '2M',
-        '-pix_fmt', 'yuv420p', save_path
+        '-pix_fmt', 'bgr24', '-r', str(output_fps), '-i', '-',
+        '-c:v', 'hevc_nvenc', '-preset', 'p6'
     ]
+
+    if Config.VIDEO_ENCODING_MODE == "BALANCED":
+        bitrate_str = f"{Config.TARGET_BITRATE_MBPS}M"
+        logging.info(f"[編碼器] 使用 BALANCED 模式，目標平均位元率: {bitrate_str}")
+        command.extend(['-rc', 'cbr', '-b:v', bitrate_str, '-maxrate', bitrate_str])
+    else: # 預設為 QUALITY 模式
+        quality_level = '30'
+        logging.info(f"[編碼器] 使用 QUALITY 模式，恆定品質等級: CQ={quality_level}")
+        command.extend(['-rc', 'vbr', '-cq', quality_level, '-b:v', '0', '-maxrate', '10M'])
+
+    command.extend(['-pix_fmt', 'yuv420p', save_path])
+    # --- 命令構建結束 ---
 
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -71,7 +80,7 @@ def encode_and_send_video(
     scale_y = Config.ENCODE_HEIGHT / Config.ANALYSIS_HEIGHT
 
     try:
-        for frame_data in frame_data_list:
+        for frame_data in sampled_frame_data_list:
             frame = frame_data['frame'].copy()
 
             if Config.TRIPWIRE_LINE_OBJECTS:
@@ -93,7 +102,8 @@ def encode_and_send_video(
                     (0, 0, 255) if track_roi_status.get(track_id, False) else (0, 255, 0))
                 x1_s, y1_s, x2_s, y2_s = int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)
                 cv2.rectangle(frame, (x1_s, y1_s), (x2_s, y2_s), color, 2)
-                cv2.putText(frame, f"ID: {track_id}", (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                cv2.putText(frame, f"ID: {track_id}", (x1_s, y1_s - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.9, color, 2)
 
             process.stdin.write(frame.tobytes())
 
@@ -114,7 +124,9 @@ def encode_and_send_video(
 
     if process.returncode != 0:
         logging.error(
-            f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {process.returncode}\n{stderr_output.decode('utf-8', errors='ignore').strip()}")
+            f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {process.returncode}\n"
+            f"{stderr_output.decode('utf-8', errors='ignore').strip()}"
+        )
     else:
         logging.info(f"[資訊] 事件影片已儲存至: {save_path}")
         _save_event_to_db(save_path, event_type, event_person_id_val)
@@ -122,7 +134,7 @@ def encode_and_send_video(
             notification_message = (
                 f"**事件警報! ({event_type})**\n"
                 f"於 `{timestamp_for_display}` 偵測到活動。\n"
-                f"影片: {Config.ENCODE_HEIGHT}p @ {actual_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS"
+                f"影片: {Config.ENCODE_HEIGHT}p @ {output_fps:.1f} FPS, 編碼速率 {encoding_fps:.1f} FPS"
             )
             notifier_instance.schedule_notification(notification_message, file_path=save_path)
 
@@ -133,7 +145,7 @@ def _process_reid_and_db(reid_features_list: list) -> int | None:
         return None
 
     unique_features = list({feat.tobytes(): feat for feat in reid_features_list}.values())
-    logging.info(f"[特徵處理] 原始特徵數: {len(reid_features_list)}, 去重後: {len(unique_features)}")
+    logging.info(f"[特徵處理] 原始特征數: {len(reid_features_list)}, 去重後: {len(unique_features)}")
 
     db = SessionLocal()
     try:
@@ -152,13 +164,12 @@ def _process_reid_and_db(reid_features_list: list) -> int | None:
                 new_cluster = Person()
                 new_cluster.features.append(PersonFeature(feature=pickle.dumps(feature)))
                 event_clusters.append(new_cluster)
-
         logging.info(f"[特徵處理] 事件內聚類完成，發現 {len(event_clusters)} 個潛在獨立人物。")
 
         static_persons_gallery = db.query(Person).options(selectinload(Person.features)).all()
         initial_db_persons = set(static_persons_gallery)
-
         final_person_map = {}
+
         for cluster in event_clusters:
             rep_feature = pickle.loads(cluster.features[0].feature)
             db_match = find_best_match_in_gallery(rep_feature, static_persons_gallery)
@@ -188,8 +199,8 @@ def _process_reid_and_db(reid_features_list: list) -> int | None:
         num_new = len(unique_persons_in_event - initial_db_persons)
         num_reid = len(unique_persons_in_event.intersection(initial_db_persons))
         logging.info(
-            f"[資料庫] Re-ID 處理完成。本次事件涉及 {len(unique_persons_in_event)} 人 (新增 {num_new}, 識別 {num_reid})。")
-
+            f"[資料庫] Re-ID 處理完成。本次事件涉及 {len(unique_persons_in_event)} 人 (新增 {num_new}, 識別 {num_reid})。"
+        )
         return event_person_id_val
 
     except Exception as e:
@@ -204,7 +215,8 @@ def _save_event_to_db(save_path: str, event_type: str, person_id: int | None):
     """將事件本身儲存到資料庫。"""
     db = SessionLocal()
     try:
-        new_event = Event(video_path=save_path, event_type=event_type, status="unreviewed", person_id=person_id)
+        new_event = Event(video_path=save_path, event_type=event_type,
+                          status="unreviewed", person_id=person_id)
         db.add(new_event)
         db.commit()
         logging.info(f"[資料庫] 已成功將事件紀錄 (ID: {new_event.id}) 寫入資料庫。")
