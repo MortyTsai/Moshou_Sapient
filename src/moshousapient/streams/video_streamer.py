@@ -36,8 +36,16 @@ class VideoStreamer:
             protocol = "UDP" if use_udp else "TCP"
             logging.info(f"[串流器] 初始化 RTSP 串流 (協定: {protocol}), 解析度: {width}x{height}")
             if use_udp:
-                self.command.extend(
-                    ['-rtsp_transport', 'udp', '-probesize', '5M', '-analyzeduration', '5M', '-i', self.src])
+                self.command.extend([
+                    '-err_detect', 'careful',
+                    '-ec', 'deblock+guess_mvs',
+                    '-fflags', 'discardcorrupt',
+                    '-rtsp_transport', 'udp',
+                    '-rtbufsize', '50M',
+                    '-probesize', '5M',
+                    '-analyzeduration', '5M',
+                    '-i', self.src
+                ])
             else:
                 self.command.extend(['-rtsp_transport', 'tcp', '-rtbufsize', '20M', '-i', self.src])
 
