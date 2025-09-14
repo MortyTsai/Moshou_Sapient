@@ -4,7 +4,7 @@
 
 MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。本專案旨在深度實踐即時影像處理、多物件追蹤 (MOT) 與長時序人物重識別 (Long-Term Re-ID) 等技術的整合應用。系統能夠處理 RTSP 影像流或本地影片檔案，執行即時物件偵測與分析，並在觸發特定事件時，將結構化的分析結果與特徵資料進行持久化儲存，為後續的進階查詢與跨攝影機分析奠定堅實基礎。
 
-![](docs/assets/demo_1.gif)   ![](docs/assets/demo_4.gif)
+![](docs/assets/demo.gif)
 
 ## 專案狀態
 
