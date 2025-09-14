@@ -1,5 +1,3 @@
-# src/moshousapient/processors/event_processor.py
-
 import logging
 import time
 from queue import Queue, Empty
@@ -19,8 +17,13 @@ class EventProcessor(BaseProcessor):
             state_lock: Lock,
             notifier,
             active_recorders: list,
+            video_fps_mode: str,
+            target_fps: float,
             name: str = "EventProcessor"
     ):
+
+        # print(f"DEBUG [event_processor.py]: Initialized with video_fps_mode = {video_fps_mode}")
+
         super().__init__(name)
         self.frame_queue = frame_queue
         self.shared_state = shared_state
@@ -39,6 +42,8 @@ class EventProcessor(BaseProcessor):
         self.dwell_time_trackers = {}
         self.track_last_positions = {}
         self.tripwire_alert_ids = set()
+        self.video_fps_mode = video_fps_mode
+        self.target_fps = target_fps
 
     def _target_func(self):
         logging.info(f"[{self.name}] 處理器已啟動。")
@@ -51,11 +56,21 @@ class EventProcessor(BaseProcessor):
                 item = self.frame_queue.get(timeout=1)
                 current_time = item['time']
 
-                with self.state_lock:
-                    person_detected_now = self.shared_state.get('person_detected', False)
-                    current_tracks = self.shared_state.get('tracked_objects', [])
-                    reid_features_map_now = self.shared_state.get('reid_features_map', {})
-                    track_roi_status_now = self.shared_state.get('track_roi_status', {})
+                # --- 最終修正：在條件判斷前正確初始化所有變數 ---
+                person_detected_now: bool = False
+                current_tracks: list = []
+                track_roi_status_now: dict = {}
+                # --- 最終修正結束 ---
+
+                if Config.VIDEO_SOURCE_TYPE == "FILE":
+                    current_tracks = item.get('tracks', [])
+                    person_detected_now = len(current_tracks) > 0
+                    track_roi_status_now = item.get('track_roi_status', {})
+                else:  # RTSP 模式
+                    with self.state_lock:
+                        current_tracks = self.shared_state.get('tracked_objects', [])
+                        person_detected_now = self.shared_state.get('person_detected', False)
+                        track_roi_status_now = self.shared_state.get('track_roi_status', {})
 
                 self._handle_tripwire_logic(current_tracks)
                 self._handle_dwell_logic(track_roi_status_now, current_time)
@@ -69,8 +84,16 @@ class EventProcessor(BaseProcessor):
 
                 if self.is_capturing_event:
                     self.event_recording.append(frame_data)
-                    if reid_features_map_now:
-                        self.current_event_features.extend(reid_features_map_now.values())
+
+                    reid_features_to_add = {}
+                    if Config.VIDEO_SOURCE_TYPE == "FILE":
+                        reid_features_to_add = item.get('reid_features_map', {})
+                    else:  # RTSP 模式
+                        with self.state_lock:
+                            reid_features_to_add = self.shared_state.get('reid_features_map', {})
+
+                    if reid_features_to_add:
+                        self.current_event_features.extend(reid_features_to_add.values())
                 else:
                     self.frame_buffer.append(frame_data)
 
@@ -90,7 +113,7 @@ class EventProcessor(BaseProcessor):
         if self.is_capturing_event:
             logging.info(f"[事件] 系統關閉，強制結束當前事件。")
             if len(self.event_recording) > 1:
-                self._start_encoding_thread()
+                self._start_encoding_thread(list(self.event_recording))
 
         logging.info(f"[{self.name}] 處理器已停止。")
 
@@ -142,7 +165,8 @@ class EventProcessor(BaseProcessor):
                         dwell_duration = current_time - tracker_info['start_time']
                         if dwell_duration > Config.ROI_DWELL_TIME_THRESHOLD:
                             logging.warning(
-                                f"--- [停留警報] --- 目標 ID: {track_id} 在 ROI 區域停留已超過 {Config.ROI_DWELL_TIME_THRESHOLD} 秒!")
+                                f"--- [停留警報] --- 目標 ID: {track_id} 在 ROI 區域停留已超過 "
+                                f"{Config.ROI_DWELL_TIME_THRESHOLD} 秒!")
                             tracker_info['alerted'] = True
                             self._set_event_type("dwell_alert")
             else:
@@ -163,42 +187,66 @@ class EventProcessor(BaseProcessor):
 
     def _update_event_state(self, person_detected_now, current_time):
         if not self.is_capturing_event:
-            if current_time - self.last_event_ended_time <= Config.COOLDOWN_PERIOD:
-                self.current_event_type = None
-                return
-            if self.current_event_type is None and person_detected_now:
+            if person_detected_now and (current_time - self.last_event_ended_time > Config.COOLDOWN_PERIOD):
                 self._set_event_type("person_detected")
-            if self.current_event_type is not None:
-                logging.info(f">>> [事件] 偵測到 '{self.current_event_type}' 事件! 開始錄製...")
-                self.is_capturing_event = True
-                self.event_recording = list(self.frame_buffer)
-                self.event_start_time = self.event_recording[0]['time'] if self.event_recording else current_time
-                self.current_event_features.clear()
+                if self.current_event_type is not None:
+                    logging.info(f">>> [事件] 偵測到 '{self.current_event_type}' 事件! 開始錄製...")
+                    self.is_capturing_event = True
+                    self.event_recording = list(self.frame_buffer)
+                    self.event_start_time = self.event_recording[0]['time'] if self.event_recording else current_time
+                    self.current_event_features.clear()
         else:
             should_end, end_reason = False, ""
+            is_segmentation = False
+
             if not person_detected_now and (current_time - self.last_person_seen_time > Config.POST_EVENT_SECONDS):
                 should_end, end_reason = True, "人物消失"
             elif current_time - self.event_start_time > Config.MAX_EVENT_DURATION:
                 should_end, end_reason = True, "超過最大錄影時長"
+                is_segmentation = True
+
             if should_end:
                 logging.info(f"[事件] 事件結束 ({end_reason})。")
-                if len(self.event_recording) > 1:
-                    self._start_encoding_thread()
-                self.is_capturing_event = False
-                self.event_recording.clear()
-                self.current_event_features.clear()
-                self.current_event_type = None
-                self.last_event_ended_time = current_time
-                with self.state_lock:
-                    self.shared_state['event_ended'] = True
+                completed_segment = list(self.event_recording)
+                if len(completed_segment) > 1:
+                    self._start_encoding_thread(completed_segment)
 
-    def _start_encoding_thread(self):
-        duration = self.event_recording[-1]['time'] - self.event_recording[0]['time']
-        actual_fps = len(self.event_recording) / duration if duration > 0 else Config.TARGET_FPS
+                if not is_segmentation:
+                    self.is_capturing_event = False
+                    self.event_recording.clear()
+                    self.current_event_features.clear()
+                    self.current_event_type = None
+                    self.last_event_ended_time = current_time
+                    with self.state_lock:
+                        self.shared_state['event_ended'] = True
+                else:
+                    logging.info(">>> [事件] 進行事件分段，準備錄製下一段...")
+                    buffer_frame_count = self.frame_buffer.maxlen
+                    self.event_recording = completed_segment[-buffer_frame_count:]
+                    self.event_start_time = self.event_recording[0]['time'] if self.event_recording else current_time
+                    self.current_event_features.clear()
+
+    def _start_encoding_thread(self, recording_segment: list):
+        duration = recording_segment[-1]['time'] - recording_segment[0]['time']
+        actual_fps = len(recording_segment) / duration if duration > 0 else self.target_fps
+        features_copy = list(self.current_event_features)
+
+        #print(f"DEBUG [event_processor.py]: Threading with video_fps_mode = {self.video_fps_mode}")
+
+        thread_args = (
+            recording_segment,  # -> frame_data_list
+            self.notifier,  # -> notifier_instance
+            actual_fps,  # -> actual_fps
+            features_copy,  # -> reid_features_list
+            self.current_event_type,  # -> event_type
+            self.video_fps_mode,  # -> video_fps_mode
+            self.target_fps  # -> target_fps
+        )
+
         encoding_thread = Thread(
-            target=encode_and_send_video, name="EncodingThread",
-            args=(list(self.event_recording), self.notifier, actual_fps,
-                  list(self.current_event_features), self.current_event_type),
+            target=encode_and_send_video,
+            name="EncodingThread",
+            args=thread_args,  # 使用我們定義好的元組
             daemon=True
         )
         self.active_recorders.append(encoding_thread)
