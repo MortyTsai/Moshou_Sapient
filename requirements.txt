@@ -28,3 +28,5 @@ scipy>=1.11.0
 
 # 幾何分析 (用於 ROI)
 Shapely>=2.0.0
+
+tensorrt
