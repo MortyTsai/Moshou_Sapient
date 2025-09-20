@@ -64,6 +64,7 @@ MoshouSapient/                          # 專案根目錄
 │   └── assets/                         # 存放 README 中使用的圖片
 │
 ├── models/                             # 存放所有 AI 模型資產
+│   ├── reid/                           # (新增) 存放進階 Re-ID 模型
 │   ├── yolo11s.pt                      # (需下載) PyTorch 格式的偵測模型
 │   ├── yolo11s-cls.pt                  # (需下載) PyTorch 格式的 Re-ID 模型
 │   └── yolo11s.engine                  # (動態生成) TensorRT 格式的偵測模型
@@ -101,6 +102,7 @@ MoshouSapient/                          # 專案根目錄
         ├── utils/                      # 通用工具函式子套件
         │   ├── __init__.py
         │   ├── geometry_utils.py       # 通用幾何計算工具
+        │   ├── pose_utils.py           # (新增) 姿態估計與進階 Re-ID 橋接工具
         │   ├── reid_utils.py           # Re-ID 相關工具函式
         │   └── video_utils.py          # 影片元數據讀取工具
         │
@@ -211,7 +213,7 @@ MoshouSapient/                          # 專案根目錄
 
 -   **[進行中] 提升 Re-ID 魯棒性**:
     -   **[已完成]** 整合 **NFC** 作為即時特徵後處理模組，提升單幀特徵穩定性。
-    -   **[下一步]** 整合 **IPG (Identity-Guided Pedestrian Generation)**，透過離線生成多姿態特徵，從根本上解決因遮擋和姿態劇變導致的 ID 切換問題。
+    -   **[下一步]** 整合 **KP-ReID (Keypoint Promptable Re-Identification)** 工具鏈。透過引入姿態估計模型，引導 Re-ID 模型專注於未被遮擋的身體部位，從根本上解決因嚴重遮擋導致的 ID 切換問題。
 -   **性能瓶頸優化**: 在 Re-ID 魯棒性得到顯著提升後，將重新審視並優化系統的整體吞吐量與延遲，特別是在高幀率影片源的處理上。
 -   **行為分析與異常偵測**: 在已實現的 ROI 停留偵測與方向性警戒線基礎上，繼續開發如「遺留物偵測」、「人員徘徊」等更複雜的分析模組。
 -   **進階資料庫查詢**: 探索基於 Re-ID 特徵向量的相似度搜尋，以實現特定人物的歷史事件檢索（例如「顯示這個人今天所有出現過的片段」）。
