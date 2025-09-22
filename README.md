@@ -17,9 +17,8 @@ MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的�
 -   **高效能推論管線 (High-Performance Inference Pipeline)**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎，並利用 **NVENC** 硬體編碼器加速事件錄影，以實現低延遲的即時處理能力。
 -   **魯棒的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法，並將偵測與特徵提取流程解耦。**透過在事件邊界重新實例化追蹤器，徹底解決了在連續事件處理中因狀態殘留導致的追蹤性能衰退問題，確保了長時間運行的穩定性。**
 -   **長時序人物重識別 (Long-Term Re-Identification)**:
-    -   **即時特徵增強 (Real-time Feature Enhancement)**: 整合 **NFC (Neighbor Feature Centralization)** 演算法作為即時後處理模組。透過在單幀內聚合相似目標的特徵，有效提升了 Re-ID 特徵在面對姿態、光照微小變化時的穩定性。
     -   **動態特徵庫 (Dynamic Feature Gallery)**: 為每個獨立個體建立並持續擴充其專屬的特徵向量集合，而非依賴單一的靜態特徵，從而形成一個動態更新的全域人物特徵庫。
-    -   **高準確度匹配邏輯**: 透過事件內的聚類分析與跨事件的全域比對，能準確地區分複雜場景中的多個目標，並有效應對姿態、光照變化與短暫遮蔽所帶來的挑戰。
+    -   **高準確度匹配邏輯**: 透過事件內的聚類分析與跨事件的全域比對，能準確地區分複雜場景中的多個目標，並有效應對姿態、光照變化與短暫遮蔽所帶來的挑戰。**本系統的 Re-ID 功能被設計為模型可替換，允許開發者透過更換更先進的預訓練模型來持續提升識別精度。**
 -   **高階行為分析 (Advanced Behavioral Analysis)**:
     -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援使用者自訂多邊形感興趣區域 (ROI)，能夠即時偵測目標是否進入特定區域，並在停留時間超過預設閾值時，觸發獨立的 `'dwell_alert'` 事件。
     -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援使用者定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向（如由外到內）的跨越發生時，觸發 `'tripwire_alert'` 事件，有效過濾無關行為。
@@ -64,7 +63,6 @@ MoshouSapient/                          # 專案根目錄
 │   └── assets/                         # 存放 README 中使用的圖片
 │
 ├── models/                             # 存放所有 AI 模型資產
-│   ├── reid/                           # (新增) 存放進階 Re-ID 模型
 │   ├── yolo11s.pt                      # (需下載) PyTorch 格式的偵測模型
 │   ├── yolo11s-cls.pt                  # (需下載) PyTorch 格式的 Re-ID 模型
 │   └── yolo11s.engine                  # (動態生成) TensorRT 格式的偵測模型
@@ -73,9 +71,9 @@ MoshouSapient/                          # 專案根目錄
 │   └── export_tensorrt.py              # 模型轉換為 TensorRT 引擎的腳本
 │
 └── src/                                # 存放所有專案原始碼
-    └── moshouSapient/                  # 專案主 Python 套件
+    └── moshousapient/                  # 專案主 Python 套件
         ├── __init__.py                 # 將目錄標記為 Python 套件
-        ├── __main__.py                 # 套件執行入口 (python -m moshouSapient)
+        ├── __main__.py                 # 套件執行入口 (python -m moshousapient)
         │
         ├── core/                       # 核心業務邏輯與協調器
         │   ├── __init__.py
@@ -87,8 +85,7 @@ MoshouSapient/                          # 專案根目錄
         │   ├── __init__.py
         │   ├── base_processor.py       # 處理器抽象基礎類別
         │   ├── event_processor.py      # 事件偵測與狀態管理處理器
-        │   ├── inference_processor.py  # AI 推論處理器
-        │   └── nfc_processor.py        # (新增) NFC 特徵後處理模組
+        │   └── inference_processor.py  # AI 推論處理器
         │
         ├── services/                   # 事件驅動型服務
         │   ├── __init__.py
@@ -102,7 +99,6 @@ MoshouSapient/                          # 專案根目錄
         ├── utils/                      # 通用工具函式子套件
         │   ├── __init__.py
         │   ├── geometry_utils.py       # 通用幾何計算工具
-        │   ├── pose_utils.py           # (新增) 姿態估計與進階 Re-ID 橋接工具
         │   ├── reid_utils.py           # Re-ID 相關工具函式
         │   └── video_utils.py          # 影片元數據讀取工具
         │
@@ -211,10 +207,7 @@ MoshouSapient/                          # 專案根目錄
 
 作為一個學習與探索性質的專案，以下是未來可能的研究與開發方向：
 
--   **[進行中] 提升 Re-ID 魯棒性**:
-    -   **[已完成]** 整合 **NFC** 作為即時特徵後處理模組，提升單幀特徵穩定性。
-    -   **[下一步]** 整合 **KP-ReID (Keypoint Promptable Re-Identification)** 工具鏈。透過引入姿態估計模型，引導 Re-ID 模型專注於未被遮擋的身體部位，從根本上解決因嚴重遮擋導致的 ID 切換問題。
--   **性能瓶頸優化**: 在 Re-ID 魯棒性得到顯著提升後，將重新審視並優化系統的整體吞吐量與延遲，特別是在高幀率影片源的處理上。
+-   **[最高優先級] Re-ID 模型升級**: 尋找並替換性能更優越的人物重識別預訓練模型，以在不增加架構複雜度的前提下，直接提升系統在複雜遮擋和多變姿態場景下的識別準確率。
 -   **行為分析與異常偵測**: 在已實現的 ROI 停留偵測與方向性警戒線基礎上，繼續開發如「遺留物偵測」、「人員徘徊」等更複雜的分析模組。
 -   **進階資料庫查詢**: 探索基於 Re-ID 特徵向量的相似度搜尋，以實現特定人物的歷史事件檢索（例如「顯示這個人今天所有出現過的片段」）。
 -   **前端介面強化**: 擴充 Web 儀表板功能，例如增加事件篩選、排序，或引入更豐富的數據視覺化圖表，並提供 ROI/警戒線的視覺化設定介面。
