@@ -1,5 +1,3 @@
-# src/moshousapient/processors/inference_processor.py
-
 import logging
 import time
 from queue import Queue, Empty
@@ -12,18 +10,13 @@ from ultralytics import YOLO
 
 from .base_processor import BaseProcessor
 from ..config import Config
-# --- 新增修改 1: 導入 NFCProcessor ---
-from .nfc_processor import NFCProcessor
-
-
-# --- 修改結束 ---
 
 
 class InferenceProcessor(BaseProcessor):
     def __init__(
             self,
             frame_queue: Queue,
-            processed_queue: Optional[Queue],
+            processed_queue: Optional[Queue], # 新增：接收 processed_queue
             shared_state: dict,
             state_lock: Lock,
             model: YOLO,
@@ -33,17 +26,13 @@ class InferenceProcessor(BaseProcessor):
     ):
         super().__init__(name)
         self.frame_queue = frame_queue
-        self.processed_queue = processed_queue
+        self.processed_queue = processed_queue # 新增
         self.shared_state = shared_state
         self.state_lock = state_lock
         self.model = model
         self.reid_model = reid_model
         self.tracker_factory = tracker_factory
         self.tracker = self.tracker_factory()
-
-        # --- 新增修改 2: 初始化 NFCProcessor ---
-        self.nfc_processor = NFCProcessor()
-        # --- 修改結束 ---
 
     def _target_func(self):
         logging.info(f"[{self.name}] 處理器已啟動，使用 GPU 進行推論。")
@@ -52,7 +41,7 @@ class InferenceProcessor(BaseProcessor):
         latency_buffer, det_time_buffer, track_time_buffer, reid_time_buffer = [], [], [], []
         logging_interval_frames = 60
 
-        while not self.stop_event.is_set():
+        while True:
             try:
                 if self.stop_event.is_set() and self.frame_queue.empty():
                     break
@@ -67,7 +56,7 @@ class InferenceProcessor(BaseProcessor):
                 item = self.frame_queue.get(timeout=1)
                 frame_counter += 1
                 t_capture = item['time']
-                original_frame = item['frame']
+                original_frame = item['frame'] # 保存原始高解析度幀
 
                 frame_low_res = cv2.resize(
                     original_frame,
@@ -76,11 +65,13 @@ class InferenceProcessor(BaseProcessor):
                 )
 
                 t_det_start = time.time()
-                dets_results = self.model(frame_low_res, device=0, verbose=False, classes=[0], conf=0.4)
+                dets_results = self.model(frame_low_res, device=0, verbose=False, classes=[0],
+                                          conf=0.4)
 
                 t_track_start = time.time()
                 boxes_on_cpu = dets_results[0].boxes.cpu()
-                tracks = self.tracker.update(boxes_on_cpu, frame_low_res) if self.tracker else np.empty((0, 5))
+                tracks = self.tracker.update(boxes_on_cpu, frame_low_res) if self.tracker else \
+                    np.empty((0, 5))
 
                 track_roi_status = self._calculate_roi_status(tracks)
 
@@ -90,11 +81,6 @@ class InferenceProcessor(BaseProcessor):
                     reid_features_map = self._extract_reid_features(tracks, frame_low_res)
                 t_reid_end = time.time()
 
-                # --- 新增修改 3: 執行 NFC 特徵後處理 ---
-                if reid_features_map:
-                    reid_features_map = self.nfc_processor.process_features(reid_features_map)
-                # --- 修改結束 ---
-
                 with self.state_lock:
                     self.shared_state['person_detected'] = len(tracks) > 0
                     self.shared_state['tracked_objects'] = tracks
@@ -102,15 +88,18 @@ class InferenceProcessor(BaseProcessor):
                         self.shared_state['reid_features_map'] = reid_features_map
                     self.shared_state['track_roi_status'] = track_roi_status
 
+                # --- 核心修改：在 FILE 模式下將處理結果推送到 processed_queue ---
                 if Config.VIDEO_SOURCE_TYPE == "FILE" and self.processed_queue:
                     processed_item = {
                         'frame': original_frame,
                         'time': t_capture,
+                        # 複製共享狀態的相關部分，確保線程安全
                         'tracks': tracks,
                         'track_roi_status': track_roi_status,
                         'reid_features_map': reid_features_map
                     }
                     self.processed_queue.put(processed_item)
+                # --- 核心修改結束 ---
 
                 self._log_performance(
                     self.name, t_capture, t_det_start, t_track_start, t_reid_start, t_reid_end,
@@ -159,8 +148,9 @@ class InferenceProcessor(BaseProcessor):
 
     @staticmethod
     def _log_performance(name, t_start, t_det, t_track, t_reid_s, t_reid_e, lat_buf, det_buf,
-                         trk_buf, reid_buf, interval):
-        lat_buf.append((time.time() - t_start) * 1000)  # 使用 time.time() 捕獲包含NFC的總延遲
+                         trk_buf, reid_buf,
+                         interval):
+        lat_buf.append((t_reid_e - t_start) * 1000)
         det_buf.append((t_track - t_det) * 1000)
         trk_buf.append((t_reid_s - t_track) * 1000)
         if (t_reid_e - t_reid_s) > 0:
