@@ -8,7 +8,7 @@ opencv-python>=4.8.0
 python-dotenv>=1.0.0
 numpy>=1.24.0
 PyYAML>=6.0
-pydantic-settings>=2.0.0  # 新增：用於類型安全的設定管理
+pydantic-settings>=2.0.0
 
 # 資料庫
 SQLAlchemy>=2.0.0
@@ -25,6 +25,7 @@ scikit-image>=0.21.0
 filterpy>=1.4.5
 lap>=0.4.0
 scipy>=1.11.0
+tensorrt
 
 # 幾何分析 (用於 ROI)
 Shapely>=2.0.0
