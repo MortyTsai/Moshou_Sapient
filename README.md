@@ -2,7 +2,7 @@
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。本專案旨在實踐即時影像處理、多物件追蹤 (MOT) 與人物重識別 (Re-ID) 等技術的整合應用。系統能夠處理 RTSP 影像流或本地影片檔案，執行即時物件偵測與分析，並在觸發特定事件時，將結構化的分析結果與特徵資料進行持久化儲存，為後續的進階查詢與分析奠定基礎。
+MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。本專案旨在實踐即時影像處理與多物件追蹤 (MOT)，並在此基礎上，探索進階的行為分析應用（如區域入侵、警戒線跨越等）。系統能夠處理 RTSP 影像流或本地影片檔案，執行即時物件偵測與追蹤，並在觸發特定事件時，利用基礎的人物重識別 (Re-ID) 特徵將結構化的分析結果進行持久化儲存，為後續的資料查詢奠定基礎。
 
 ![](docs/assets/demo.gif)
 
@@ -15,17 +15,14 @@ MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的�
 ## 核心特性
 
 -   **高效能推論管線 (High-Performance Inference Pipeline)**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎，並利用 **NVENC** 硬體編碼器加速事件錄影，以實現低延遲的即時處理能力。
--   **穩定的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法，並將偵測與特徵提取流程解耦。**透過在事件邊界重新實例化追蹤器，有效解決了在連續事件處理中因狀態殘留導致的追蹤性能衰退問題，確保了長時間運行的穩定性。**
--   **人物重識別 (Person Re-Identification)**:
-    -   **動態特徵庫 (Dynamic Feature Gallery)**: 為偵測到的每個獨立個體建立其特徵向量集合，形成一個動態更新的人物特徵庫。
-    -   **關聯比對邏輯**: 透過事件內的特徵聚類與跨事件的資料庫比對，嘗試關聯複雜場景中的多個目標，以應對姿態、光照變化與短暫遮蔽所帶來的挑戰。
--   **Re-ID 模型的整合性考量 (Re-ID Model Integration Considerations)**: 專案初期目標是實現 Re-ID 模型的可替換性。然而，經過深入調研發現，當前高效能的第三方 Re-ID 模型均與其專屬的程式碼框架深度綁定。要將其整合進本專案，需要對不同的資料預處理、模型結構及特徵後處理流程進行深度分析與客製化開發。考量到本專案「保持架構簡潔穩定」的核心原則，以及開發資源的限制，現階段決定**維持在 Ultralytics 生態系內**，使用其提供的基線模型。這是一個在性能與維護複雜度之間取得平衡的務實決策。
--   **高階行為分析 (Advanced Behavioral Analysis)**:
+-   **穩定的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法，並利用一個基礎的 Re-ID 模型提取外觀特徵，以增強其在短時間遮擋情境下的追蹤穩定性。**透過在事件邊界重新實例化追蹤器，有效解決了在連續事件處理中因狀態殘留導致的追蹤性能衰退問題，確保了長時間運行的穩定性。**
+-   **進階行為分析 (Advanced Behavioral Analysis)**:
     -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援使用者自訂多邊形感興趣區域 (ROI)，能夠偵測目標是否進入特定區域，並在停留時間超過預設閾值時，觸發獨立的 `'dwell_alert'` 事件。
     -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援使用者定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向的跨越發生時，觸發 `'tripwire_alert'` 事件，以過濾無關行為。
     -   **事件優先級系統 (Event Priority System)**: 內建 `tripwire_alert` > `dwell_alert` > `person_detected` 的事件優先級機制。當更高優先級的行為發生時，可將正在錄製中的低優先級事件「升級」，確保最終儲存的事件類型能反映最關鍵的行為。
     -   **事件分段機制 (Event Segmentation)**: 透過事件狀態管理，系統能夠在持續活動的場景中，因達到最大錄影時長而自動切分事件，確保長時間活動能被記錄為多個獨立的事件片段。
--   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到人物或特定行為時觸發事件，並使用 SQLAlchemy ORM 將 Re-ID 特徵向量與事件元數據，以結構化的方式存入 SQLite 資料庫 (WAL 模式)。
+-   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到人物或特定行為時觸發事件，並使用 SQLAlchemy ORM 將事件元數據與關聯的特徵向量，以結構化的方式存入 SQLite 資料庫 (WAL 模式)。
+-   **關於 Re-ID 模型的整合性說明**: 經過深入調研，我們確認高效能的第三方 Re-ID 模型均與其專屬的程式碼框架深度綁定。要將其整合進本專案，需要進行複雜的客製化開發。考量到專案「維持架構簡潔穩定」的核心原則，現階段決定**專注於穩定發揮追蹤與行為分析功能**，而非追求極致的跨事件識別精度。
 -   **靈活的影片輸出設定 (Flexible Video Output Configuration)**:
     -   **幀率控制**: 使用者可選擇保留來源影片的處理後實際幀率 (`SOURCE` 模式)，或將輸出影片降採樣至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
     -   **編碼策略**: 提供兩種編碼模式供選擇。「品質」(`QUALITY`) 模式優先保證恆定的視覺品質，而「均衡」(`BALANCED`) 模式則將影片控制在指定的平均位元率，以實現可預測的檔案大小，更適合長時間監控的儲存需求。
