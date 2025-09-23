@@ -156,7 +156,7 @@ MoshouSapient/                          # 專案根目錄
 
 5.  **準備 AI 模型**:
     -   將 `yolo11s.pt` (物件偵測) 和 `yolo11s-cls.pt` (Re-ID) 模型檔案放置在 `models/` 資料夾中。
-    -   執行轉換腳本，將**偵測模型**生成為 TensorRT 引擎：
+    -   執行轉換腳本，將`yolo11s.pt`生成為 TensorRT 引擎：
         ```bash
         python scripts/export_tensorrt.py
         ```
