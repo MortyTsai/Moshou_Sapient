@@ -47,8 +47,7 @@ class EventProcessor(BaseProcessor):
 
     def _target_func(self):
         logging.info(f"[{self.name}] 處理器已啟動。")
-
-        while True:
+        while not self.stop_event.is_set():
             try:
                 if self.stop_event.is_set() and self.frame_queue.empty():
                     break
@@ -56,21 +55,11 @@ class EventProcessor(BaseProcessor):
                 item = self.frame_queue.get(timeout=1)
                 current_time = item['time']
 
-                # --- 最終修正：在條件判斷前正確初始化所有變數 ---
-                person_detected_now: bool = False
-                current_tracks: list = []
-                track_roi_status_now: dict = {}
-                # --- 最終修正結束 ---
-
-                if Config.VIDEO_SOURCE_TYPE == "FILE":
-                    current_tracks = item.get('tracks', [])
-                    person_detected_now = len(current_tracks) > 0
-                    track_roi_status_now = item.get('track_roi_status', {})
-                else:  # RTSP 模式
-                    with self.state_lock:
-                        current_tracks = self.shared_state.get('tracked_objects', [])
-                        person_detected_now = self.shared_state.get('person_detected', False)
-                        track_roi_status_now = self.shared_state.get('track_roi_status', {})
+                with self.state_lock:
+                    current_tracks = self.shared_state.get('tracked_objects', [])
+                    person_detected_now = self.shared_state.get('person_detected', False)
+                    track_roi_status_now = self.shared_state.get('track_roi_status', {})
+                    reid_features_to_add = self.shared_state.get('reid_features_map', {})
 
                 self._handle_tripwire_logic(current_tracks)
                 self._handle_dwell_logic(track_roi_status_now, current_time)
@@ -84,14 +73,6 @@ class EventProcessor(BaseProcessor):
 
                 if self.is_capturing_event:
                     self.event_recording.append(frame_data)
-
-                    reid_features_to_add = {}
-                    if Config.VIDEO_SOURCE_TYPE == "FILE":
-                        reid_features_to_add = item.get('reid_features_map', {})
-                    else:  # RTSP 模式
-                        with self.state_lock:
-                            reid_features_to_add = self.shared_state.get('reid_features_map', {})
-
                     if reid_features_to_add:
                         self.current_event_features.extend(reid_features_to_add.values())
                 else:
@@ -111,7 +92,7 @@ class EventProcessor(BaseProcessor):
                 time.sleep(1)
 
         if self.is_capturing_event:
-            logging.info(f"[事件] 系統關閉，強制結束當前事件。")
+            logging.info(f"[事件] 系統關閉, 強制結束當前事件。")
             if len(self.event_recording) > 1:
                 self._start_encoding_thread(list(self.event_recording))
 
@@ -246,7 +227,7 @@ class EventProcessor(BaseProcessor):
         encoding_thread = Thread(
             target=encode_and_send_video,
             name="EncodingThread",
-            args=thread_args,  # 使用我們定義好的元組
+            args=thread_args,
             daemon=True
         )
         self.active_recorders.append(encoding_thread)
