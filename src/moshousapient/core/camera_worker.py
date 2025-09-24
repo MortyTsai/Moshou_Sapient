@@ -1,10 +1,11 @@
+# src/moshousapient/core/camera_worker.py
 import logging
 import yaml
-import threading
 from queue import Queue
 from types import SimpleNamespace
-from ultralytics import YOLO
+import threading
 
+from ultralytics import YOLO
 from ..streams.video_streamer import VideoStreamer
 from ..processors.inference_processor import InferenceProcessor
 from ..processors.event_processor import EventProcessor
@@ -20,21 +21,10 @@ class CameraWorker:
         self.shared_state = {'person_detected': False, 'tracked_objects': []}
         self.shared_state_lock = threading.Lock()
 
-        # --- 修改：為不同模式設定不同的佇列 ---
         self.inference_queue = Queue(maxsize=2)
-        self.event_queue = None
-        self.processed_queue = None
 
-        if Config.VIDEO_SOURCE_TYPE == "FILE":
-            # FILE 模式：線性處理流程
-            self.processed_queue = Queue(maxsize=300)  # 給予足夠的緩衝
-            event_processor_input_queue = self.processed_queue
-        else:  # RTSP 模式：並行處理流程
-            buffer_size = int(Config.TARGET_FPS * (Config.PRE_EVENT_SECONDS +
-                                                   Config.POST_EVENT_SECONDS) * 2.0)
-            self.event_queue = Queue(maxsize=buffer_size)
-            event_processor_input_queue = self.event_queue
-        # --- 修改結束 ---
+        buffer_size = int(Config.TARGET_FPS * (Config.PRE_EVENT_SECONDS + Config.POST_EVENT_SECONDS) * 2.0)
+        self.event_queue = Queue(maxsize=buffer_size)
 
         self.video_streamer = VideoStreamer(
             src=self.config['rtsp_url'],
@@ -45,8 +35,6 @@ class CameraWorker:
 
         self.inference_processor = InferenceProcessor(
             frame_queue=self.inference_queue,
-            # --- 新增：將 processed_queue 傳遞給 InferenceProcessor ---
-            processed_queue=self.processed_queue,
             shared_state=self.shared_state,
             state_lock=self.shared_state_lock,
             model=model,
@@ -55,11 +43,8 @@ class CameraWorker:
             name=f"{self.name}-Inference"
         )
 
-        #print(f"DEBUG [camera_worker.py]: Passing Config.VIDEO_FPS_MODE = {Config.VIDEO_FPS_MODE} to EventProcessor")
-
         self.event_processor = EventProcessor(
-            # --- 修改：使用模式對應的輸入佇列 ---
-            frame_queue=event_processor_input_queue,
+            frame_queue=self.event_queue,
             shared_state=self.shared_state,
             state_lock=self.shared_state_lock,
             notifier=self.notifier,
@@ -76,27 +61,17 @@ class CameraWorker:
                 cfg_dict = yaml.safe_load(f)
             tracker_args = SimpleNamespace(**cfg_dict)
             from ultralytics.trackers import BOTSORT
-            logging.info(f"[{self.name}] 已成功解析追蹤器設定檔: "
-                         f"'{Config.TRACKER_CONFIG_PATH}'")
+            logging.info(f"[{self.name}] 已成功解析追蹤器設定檔: {Config.TRACKER_CONFIG_PATH}")
             return BOTSORT(args=tracker_args)
         except Exception as e:
-            logging.error(f"[{self.name}] 解析追蹤器設定檔或建立追蹤器時發生錯誤: {e}",
-                          exc_info=True)
+            logging.error(f"[{self.name}] 解析追蹤器設定檔或建立追蹤器時發生錯誤: {e}", exc_info=True)
             return None
 
     def start(self):
         logging.info(f"[{self.name}] 正在啟動...")
         for processor in self.processors:
             processor.start()
-
-        # --- 修改：根據模式決定 VideoStreamer 的輸出佇列 ---
-        if Config.VIDEO_SOURCE_TYPE == "FILE":
-            # FILE 模式下，VideoStreamer 只將幀發送到 inference_queue
-            self.video_streamer.start(self.inference_queue)
-        else:  # RTSP 模式
-            # RTSP 模式下，維持雙佇列以實現最低延遲
-            self.video_streamer.start(self.event_queue, self.inference_queue)
-        # --- 修改結束 ---
+        self.video_streamer.start(self.event_queue, self.inference_queue)
 
     def stop(self):
         logging.info(f"[{self.name}] 正在關閉...")
