@@ -5,6 +5,7 @@ import threading
 import sys
 import torch
 from typing import Optional, Dict, Any
+from pathlib import Path
 
 from ..config import Config
 from ..logging_setup import setup_logging
@@ -13,12 +14,12 @@ from ..web.app import create_flask_app
 from .camera_worker import CameraWorker
 from ..services.discord_notifier import DiscordNotifier
 from .runners import RTSPRunner, FileRunner, BaseRunner
+from ..utils.video_utils import get_video_resolution
+from ..settings import PROJECT_ROOT
 
 
 def pre_flight_checks() -> bool:
-    """執行啟動前的環境檢查。"""
     logging.info("[系統] 執行啟動前環境檢查...")
-    # 只有在需要 GPU 的模式下才檢查 CUDA
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not torch.cuda.is_available():
             logging.critical("-" * 60)
@@ -26,7 +27,7 @@ def pre_flight_checks() -> bool:
             logging.critical("請確認:")
             logging.critical("  1. NVIDIA 驅動程式已正確安裝。")
             logging.critical("  2. 您已安裝支援 GPU 的 PyTorch 版本 (版本號不應包含 '+cpu')。")
-            logging.critical("  請執行 'pip uninstall torch' 後, 參考 PyTorch 官網安裝 GPU 版本。")
+            logging.critical("  請執行 'pip uninstall torch' 後，參考 PyTorch 官網安裝 GPU 版本。")
             logging.critical("-" * 60)
             return False
         logging.info(f"[系統] CUDA 設備檢查通過。偵測到 GPU: {torch.cuda.get_device_name(0)}")
@@ -36,10 +37,9 @@ def pre_flight_checks() -> bool:
 
 
 def get_camera_config() -> Optional[Dict[str, Any]]:
-    """根據 .env 設定解析並回傳攝影機設定字典。"""
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not Config.RTSP_URL:
-            logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL, 請檢查 .env 檔案。")
+            logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
             return None
         logging.info(f"[系統] 影像來源模式: RTSP 即時串流")
         source_uri = Config.RTSP_URL
@@ -50,7 +50,6 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
             transport_protocol = "udp"
         else:
             transport_protocol = protocol_setting
-
         return {
             "name": f"Worker-{source_name}",
             "rtsp_url": source_uri,
@@ -68,7 +67,26 @@ def main():
         sys.exit(1)
 
     init_db()
-    Config.initialize_dynamic_settings()
+
+    if Config.VIDEO_SOURCE_TYPE == "FILE":
+        logging.info("[系統] 偵測到檔案模式，正在動態獲取影片解析度...")
+        video_path_str = Config.VIDEO_FILE_PATH
+        if not video_path_str:
+            logging.warning("[系統] 檔案模式已啟用，但未提供 VIDEO_FILE_PATH。")
+        else:
+            video_path = Path(video_path_str)
+            if not video_path.is_absolute():
+                video_path = PROJECT_ROOT / video_path
+
+            if video_path.exists():
+                resolution = get_video_resolution(str(video_path))
+                if resolution:
+                    Config.ENCODE_WIDTH, Config.ENCODE_HEIGHT = resolution
+                    logging.info(f"[系統] 已動態更新影像尺寸為: {resolution[0]}x{resolution[1]}")
+                else:
+                    logging.error("[系統] 無法獲取影片解析度，將使用預設值。")
+            else:
+                logging.warning(f"[系統] 未找到有效的影片檔案: {video_path}，將使用預設影像尺寸。")
 
     # 2. 初始化通知器 (所有模式共用)
     notifier = None
@@ -77,7 +95,7 @@ def main():
             notifier = DiscordNotifier(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
             notifier.start()
         else:
-            logging.warning("[系統] Discord 功能已啟用, 但未提供完整的憑證。通知功能將被禁用。")
+            logging.warning("[系統] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
     else:
         logging.info("[系統] Discord 通知功能已被禁用。")
 
@@ -94,7 +112,6 @@ def main():
 
     # 4. 根據設定選擇並建立執行策略
     runner: Optional[BaseRunner] = None
-
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         try:
             from ultralytics import YOLO
@@ -104,28 +121,22 @@ def main():
             warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
             model.predict(warmup_frame, device=0, verbose=False)
             logging.info("[YOLO] TensorRT 模型已成功載入並預熱。")
-
             logging.info(f"[Re-ID] 正在載入 {Config.REID_MODEL_PATH} 作為特徵提取器...")
             reid_model = YOLO(Config.REID_MODEL_PATH)
             reid_model.predict(warmup_frame, device=0, verbose=False)
             logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
-
             camera_config = get_camera_config()
             if not camera_config:
                 if notifier: notifier.stop()
                 sys.exit(1)
-
             workers = [CameraWorker(camera_config, model, reid_model, notifier)]
             runner = RTSPRunner(workers, notifier)
-
         except Exception as e:
             logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
             if notifier: notifier.stop()
             sys.exit(1)
-
     elif Config.VIDEO_SOURCE_TYPE == "FILE":
         runner = FileRunner(workers=[], notifier=notifier)
-
     else:
         logging.critical(
             f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
@@ -143,10 +154,10 @@ def main():
         finally:
             runner.shutdown()
     else:
-        logging.error("[系統] 未能建立有效的執行器, 系統即將關閉。")
+        logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
         if notifier:
             notifier.stop()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
