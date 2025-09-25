@@ -5,88 +5,123 @@ import json
 import logging
 import sys
 import time
+import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Union, List
 from types import SimpleNamespace
 
-settings = None
+import cv2
+import numpy as np
+import torch
+from shapely.geometry import Polygon, LineString, Point
+from shapely.errors import ShapelyError
+from ultralytics import YOLO
+from ultralytics.trackers import BOTSORT
+
 try:
     project_root = Path(__file__).resolve().parent.parent.parent.parent
     src_path = project_root / "src"
     if str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
     from moshousapient.settings import settings
+    from moshousapient.utils.geometry_utils import get_point_side_of_line
 except ImportError as e:
-    print(f"緊急錯誤: 無法導入 MoshouSapient 設定模組。 {e}", file=sys.stderr)
+    print(f"緊急錯誤: 無法導入 MoshouSapient 核心模組。請確保從專案根目錄執行。錯誤: {e}", file=sys.stderr)
     sys.exit(1)
 
+# --- 全域設定 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [IsolatedInferenceService] - %(levelname)s - %(message)s',
                     stream=sys.stdout)
 
 
+class BehaviorConfig:
+    """在隔離服務中載入並管理行為分析規則"""
+    ROI_ENABLED: bool = False
+    ROI_POLYGON_OBJECT: Union[Polygon, None] = None
+    ROI_DWELL_TIME_THRESHOLD: float = 3.0
+    TRIPWIRES_ENABLED: bool = False
+    TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
+
+    @staticmethod
+    def load_from_yaml(config_path: Path):
+        if not config_path.exists():
+            logging.warning(f"行為分析設定檔不存在: {config_path}。將停用高階行為分析。")
+            return
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            # 載入 ROI 設定
+            roi_settings = config_data.get('roi', {})
+            if roi_settings and roi_settings.get('enabled', False):
+                polygon_points = roi_settings.get('polygon_points', [])
+                if polygon_points and len(polygon_points) >= 3:
+                    BehaviorConfig.ROI_POLYGON_OBJECT = Polygon(polygon_points)
+                    BehaviorConfig.ROI_ENABLED = True
+                    BehaviorConfig.ROI_DWELL_TIME_THRESHOLD = roi_settings.get('dwell_time_threshold', 3.0)
+                    logging.info(f"成功載入 ROI 區域，面積: {BehaviorConfig.ROI_POLYGON_OBJECT.area:.2f} 平方像素。")
+                else:
+                    logging.warning("ROI 已啟用但未提供有效的多邊形座標點 (至少3個點)。ROI 功能已停用。")
+
+            # 載入 Tripwire 設定
+            tripwire_settings = config_data.get('tripwires', {})
+            if tripwire_settings and tripwire_settings.get('enabled', False):
+                lines = tripwire_settings.get('lines', [])
+                BehaviorConfig.TRIPWIRE_LINE_OBJECTS.clear()
+                for line_config in lines:
+                    points = line_config.get("points")
+                    if points and len(points) == 2:
+                        line = LineString(points)
+                        direction = line_config.get("alert_direction", "both")
+                        BehaviorConfig.TRIPWIRE_LINE_OBJECTS.append({"line": line, "direction": direction})
+                if BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
+                    BehaviorConfig.TRIPWIRES_ENABLED = True
+                    logging.info(f"成功載入 {len(BehaviorConfig.TRIPWIRE_LINE_OBJECTS)} 條警戒線。")
+        except (yaml.YAMLError, ShapelyError, TypeError) as e:
+            logging.error(f"解析行為分析設定檔時發生錯誤: {e}。將停用高階行為分析。")
+
+
 def load_models() -> Dict[str, Any]:
+    """載入並預熱偵測與 Re-ID 模型"""
     try:
-        from ultralytics import YOLO
-        import numpy as np
-        import torch
-
         if not torch.cuda.is_available():
-            logging.error("嚴重錯誤: 在隔離服務中未偵測到 CUDA 設備。")
+            logging.error("嚴重錯誤: 未偵測到 CUDA 設備。")
             return {}
-
         logging.info(f"偵測到 GPU: {torch.cuda.get_device_name(0)}")
 
-        model_path = settings.MODEL_PATH
-        logging.info(f"正在從 {model_path} 載入 TensorRT 偵測模型...")
-        model = YOLO(model_path, task='detect')
-
-        reid_model_path = settings.REID_MODEL_PATH
-        logging.info(f"正在從 {reid_model_path} 載入 Re-ID 模型...")
-        reid_model = YOLO(reid_model_path)
+        model = YOLO(settings.MODEL_PATH, task='detect')
+        reid_model = YOLO(settings.REID_MODEL_PATH)
 
         logging.info("正在預熱 AI 模型...")
         warmup_frame = np.zeros((settings.ANALYSIS_HEIGHT, settings.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False, classes=[0])
         reid_model.predict(warmup_frame, device=0, verbose=False)
         logging.info("AI 模型已成功載入並預熱。")
-
         return {"detector": model, "reid": reid_model}
-    except Exception as model_load_exc:
-        logging.error(f"載入 AI 模型時發生嚴重錯誤: {model_load_exc}", exc_info=True)
+    except Exception as e:
+        logging.error(f"載入 AI 模型時發生嚴重錯誤: {e}", exc_info=True)
         return {}
 
 
 def initialize_tracker() -> Any:
+    """根據設定檔初始化追蹤器"""
     try:
-        import yaml
-        from ultralytics.trackers import BOTSORT
-
-        tracker_config_path = settings.TRACKER_CONFIG_PATH
-        logging.info(f"正在從 {tracker_config_path} 解析追蹤器設定...")
-        with open(tracker_config_path, "r", encoding="utf-8") as f:
+        with open(settings.TRACKER_CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg_dict = yaml.safe_load(f)
-
         tracker_args = SimpleNamespace(**cfg_dict)
         tracker_args.with_reid = True
-
         tracker = BOTSORT(args=tracker_args)
         logging.info("追蹤器 (BoT-SORT, with Re-ID) 已成功初始化。")
         return tracker
-    except Exception as tracker_init_exc:
-        logging.error(f"初始化追蹤器時發生錯誤: {tracker_init_exc}", exc_info=True)
+    except Exception as e:
+        logging.error(f"初始化追蹤器時發生錯誤: {e}", exc_info=True)
         return None
 
 
-def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, Any]) -> None:
+def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, Any]):
+    """對指定的影片檔案執行完整的 AI 推論流程"""
     logging.info(f"開始處理影片: {video_path}")
     start_time = time.time()
-
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        logging.error("OpenCV 或 NumPy 未安裝，無法處理影片。")
-        sys.exit(1)
 
     detector = models.get("detector")
     reid_model = models.get("reid")
@@ -102,6 +137,7 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
     frame_count = 0
     reid_interval = 5
     all_frame_data = []
+    track_last_positions = {}
 
     while True:
         ret, frame = cap.read()
@@ -110,10 +146,8 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
         frame_count += 1
 
         frame_low_res = cv2.resize(frame, (settings.ANALYSIS_WIDTH, settings.ANALYSIS_HEIGHT))
-
         dets_results = detector(frame_low_res, device=0, verbose=False, classes=[0], conf=0.4)
-        boxes_on_cpu = dets_results[0].boxes.cpu()
-        tracks = tracker.update(boxes_on_cpu, frame_low_res)
+        tracks = tracker.update(dets_results[0].boxes.cpu(), frame_low_res)
 
         current_frame_tracks = []
         if tracks.size > 0:
@@ -131,19 +165,51 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
                     for i, track_id in enumerate(valid_track_ids):
                         reid_features_map[track_id] = embeddings[i].cpu().numpy().tolist()
 
+            current_tracked_ids = set()
             for track in tracks:
                 track_id = int(track[4])
+                current_tracked_ids.add(track_id)
+                x1, y1, x2, y2 = track[:4]
+
+                is_in_roi = False
+                if BehaviorConfig.ROI_ENABLED and BehaviorConfig.ROI_POLYGON_OBJECT:
+                    bottom_center_point = Point((x1 + x2) / 2, y2)
+                    is_in_roi = BehaviorConfig.ROI_POLYGON_OBJECT.contains(bottom_center_point)
+
+                has_crossed_tripwire = False
+                current_position = Point((x1 + x2) / 2, y2)
+                last_position = track_last_positions.get(track_id)
+
+                if BehaviorConfig.TRIPWIRES_ENABLED and last_position and last_position != current_position:
+                    movement_line = LineString([last_position, current_position])
+                    for tripwire_obj in BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
+                        tripwire_line, alert_direction = tripwire_obj["line"], tripwire_obj["direction"]
+                        if movement_line.intersects(tripwire_line):
+                            p1, p2 = tripwire_line.coords
+                            side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
+                            side_after = get_point_side_of_line(current_position, Point(p1), Point(p2))
+                            if side_before != 0 and side_after != 0 and side_before != side_after:
+                                crossed_to_right = side_before == 1 and side_after == -1
+                                crossed_to_left = side_before == -1 and side_after == 1
+                                if (alert_direction == "both" or
+                                        (alert_direction == "cross_to_right" and crossed_to_right) or
+                                        (alert_direction == "cross_to_left" and crossed_to_left)):
+                                    has_crossed_tripwire = True
+                                    break
+
+                track_last_positions[track_id] = current_position
+
                 current_frame_tracks.append({
-                    "track_id": track_id,
-                    "box_xyxy": [float(coord) for coord in track[:4]],
-                    "confidence": float(track[5]),
-                    "feature": reid_features_map.get(track_id)  # 如果當前幀提取了特徵，則加入
+                    "track_id": track_id, "box_xyxy": [float(coord) for coord in track[:4]],
+                    "confidence": float(track[5]), "feature": reid_features_map.get(track_id),
+                    "is_in_roi": is_in_roi, "has_crossed_tripwire": has_crossed_tripwire
                 })
 
-        all_frame_data.append({
-            "frame_index": frame_count,
-            "tracks": current_frame_tracks
-        })
+            disappeared_ids = set(track_last_positions.keys()) - current_tracked_ids
+            for track_id in disappeared_ids:
+                del track_last_positions[track_id]
+
+        all_frame_data.append({"frame_index": frame_count, "tracks": current_frame_tracks})
 
     cap.release()
     end_time = time.time()
@@ -151,11 +217,9 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
     logging.info(f"影片分析完成。共處理 {frame_count} 幀，耗時 {processing_duration:.2f} 秒。")
 
     final_results = {
-        "video_path": str(video_path),
-        "status": "success",
+        "video_path": str(video_path), "status": "success",
         "analytics": {
-            "total_frames": frame_count,
-            "source_fps": cap.get(cv2.CAP_PROP_FPS) or 30.0,
+            "total_frames": frame_count, "source_fps": cap.get(cv2.CAP_PROP_FPS) or 30.0,
             "processing_duration_sec": processing_duration,
         },
         "frames": all_frame_data
@@ -167,14 +231,23 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
 
 
 def main():
+    """主函式：解析參數並啟動推論"""
     parser = argparse.ArgumentParser(description="MoshouSapient - 獨立 AI 推論服務")
     parser.add_argument('--video-path', type=Path, required=True)
     parser.add_argument('--output-json-path', type=Path, required=True)
+    parser.add_argument('--behavior-config-path', type=Path, required=True)
     args = parser.parse_args()
 
-    if not settings: sys.exit(1)
+    if not settings:
+        logging.error("設定模組未成功載入。")
+        sys.exit(1)
+
+    BehaviorConfig.load_from_yaml(args.behavior_config_path)
+
     models = load_models()
-    if not models: sys.exit(1)
+    if not models:
+        sys.exit(1)
+
     run_inference(args.video_path, args.output_json_path, models)
 
 
