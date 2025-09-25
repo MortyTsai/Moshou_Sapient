@@ -99,7 +99,7 @@ MoshouSapient/                          # 專案根目錄
         ├── database.py                 # 資料庫設定與 Session 管理
         ├── logging_setup.py            # 全域日誌設定
         ├── models.py                   # 資料庫 ORM 模型定義
-        └── settings.py                 # Pydantic 靜態設定管理```
+        └── settings.py                 # Pydantic 靜態設定管理
 ```
 ## 環境準備
 
