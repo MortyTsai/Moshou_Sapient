@@ -99,7 +99,8 @@ class FileRunner(BaseRunner):
         command = [
             sys.executable, "-m", "moshousapient.services.isolated_inference_service",
             "--video-path", str(video_path.resolve()),
-            "--output-json-path", str(json_output_path.resolve())
+            "--output-json-path", str(json_output_path.resolve()),
+            "--behavior-config-path", str(Config.BEHAVIOR_CONFIG_PATH)
         ]
         logging.info(f"[FileRunner] 準備執行子程序，結果將輸出至 {json_output_path}")
 
