@@ -43,63 +43,77 @@ https://github.com/user-attachments/assets/78e7c929-2b9e-4a4a-b807-37547966b975
 
 ## 系統檔案結構
 ```
-MoshouSapient/                          # 專案根目錄
+MoshouSapient/                                  # 專案根目錄
 │
-├── .env.example                        # 環境變數設定檔範本
-├── .gitignore                          # Git 版本控制忽略清單
-├── README.md                           # 專案說明文件
-├── requirements.txt                    # Python 依賴套件列表
+├── .env.example                                # 環境變數設定檔範本
+├── .gitignore                                  # Git 版本控制忽略清單
+├── README.md                                   # 專案說明文件
+├── requirements.txt                            # Python 依賴套件列表
 │
-├── configs/                            # 存放所有靜態設定檔
-│   ├── behavior_analysis.yaml          # 行為分析規則 (ROI, 警戒線)
-│   └── custom_botsort.yaml             # BoT-SORT 追蹤器客製化參數
+├── configs/                                    # 存放所有靜態設定檔
+│   ├── behavior_analysis.yaml                  # 行為分析規則 (ROI, 警戒線)
+│   └── custom_botsort.yaml                     # BoT-SORT 追蹤器客製化參數
 │
-├── data/                               # 存放專案資料 (執行時生成)
-│   ├── captures/                       # 儲存事件錄影
-│   ├── security_events.db              # SQLite 資料庫檔案
-│   └── video_samples/                  # 存放 FILE 模式的範例影片
+├── data/                                       # 存放專案資料 (執行時生成)
+│   ├── captures/                               # 儲存事件錄影
+│   ├── security_events.db                      # SQLite 資料庫檔案
+│   └── video_samples/                          # 存放 FILE 模式的範例影片
 │
-├── docs/                               # 存放所有文件與相關資源
+├── docs/                                       # 存放所有文件與相關資源
 │   └── assets/
-│       └── demo.mp4                    # README 中使用的演示影片
+│       └── demo.mp4                            # README 中使用的演示影片
 │
-├── models/                             # 存放所有 AI 模型資產
+├── models/                                     # 存放所有 AI 模型資產
 │
-├── scripts/                            # 存放輔助開發腳本
-│   └── export_tensorrt.py              # 模型轉換為 TensorRT 引擎的腳本
+├── scripts/                                    # 存放輔助開發腳本
+│   └── export_tensorrt.py                      # 模型轉換為 TensorRT 引擎的腳本
 │
-└── src/                                # 存放所有專案原始碼
-    └── moshouSapient/                  # 專案主 Python 套件
-        ├── __main__.py                 # 套件執行入口
+└── src/                                        # 存放所有專案原始碼
+    └── moshousapient/                          # 專案主 Python 套件
+        ├── __init__.py                         # 將目錄標記為 Python 套件
+        ├── __main__.py                         # 套件執行入口 (python -m moshousapient)
         │
-        ├── core/                       # 核心業務邏輯與協調器
-        │   ├── camera_worker.py        # (RTSP) 管理單一攝影機管線
-        │   ├── main.py                 # 應用程式主邏輯
-        │   └── runners.py              # 執行策略模組 (RTSP/File)
+        ├── core/                               # 核心業務邏輯與協調器
+        │   ├── __init__.py
+        │   ├── camera_worker.py                # (RTSP) 管理單一攝影機完整處理管線的類別
+        │   ├── main.py                         # 應用程式主邏輯，負責初始化與啟動
+        │   └── runners.py                      # 執行策略模組 (RTSPRunner / FileRunner)
         │
-        ├── processors/                 # 資料流處理單元
-        │   ├── base_processor.py       # 處理器抽象基礎類別
-        │   ├── event_processor.py      # (RTSP) 事件偵測與狀態管理
-        │   ├── file_result_processor.py# (FILE) 處理 JSON 結果與事件生成
-        │   └── inference_processor.py  # (RTSP) AI 推論處理器
+        ├── processors/                         # 持續性資料流處理單元
+        │   ├── __init__.py
+        │   ├── base_processor.py               # 處理器執行緒的抽象基礎類別
+        │   ├── event_processor.py              # (RTSP) 根據推論結果進行事件判斷與錄製觸發
+        │   ├── file_result_processor.py        # (FILE) 處理子程序JSON結果並切分事件
+        │   └── inference_processor.py          # (RTSP) 執行 AI 推論與追蹤
         │
-        ├── services/                   # 外部服務與獨立邏輯單元
-        │   ├── database_service.py     # 資料庫互動服務
-        │   ├── discord_notifier.py     # Discord Bot 通知服務
-        │   ├── isolated_inference_service.py # (FILE) 獨立的 AI 推論子程序
-        │   └── video_recorder.py       # (RTSP) 影片錄製服務
+        ├── services/                           # 外部服務與獨立邏輯單元
+        │   ├── __init__.py
+        │   ├── database_service.py             # 負責所有資料庫互動 (事件儲存, Re-ID)
+        │   ├── discord_notifier.py             # Discord Bot 通知服務
+        │   ├── isolated_inference_service.py   # (FILE) 獨立的 AI 推論子程序
+        │   └── video_recorder.py               # (RTSP) 接收影像幀並使用 FFmpeg 進行硬體編碼
         │
-        ├── streams/                    # 資料來源讀取模組
+        ├── streams/                            # 資料來源讀取模組
+        │   ├── __init__.py
+        │   └── video_streamer.py               # (RTSP) 使用 FFmpeg 從 RTSP 來源讀取影像串流
         │
-        ├── utils/                      # 通用工具函式
+        ├── utils/                              # 通用工具函式子套件
+        │   ├── __init__.py
+        │   ├── geometry_utils.py               # 通用幾何計算工具 (如向量叉積)
+        │   ├── reid_utils.py                   # Re-ID 相關工具函式 (如餘弦相似度)
+        │   └── video_utils.py                  # 影片處理工具 (解析度獲取, 視覺化繪製)
         │
-        ├── web/                        # Web 儀表板
+        ├── web/                                # Web 儀表板子套件
+        │   ├── __init__.py
+        │   ├── app.py                          # Flask 應用程式與路由定義
+        │   └── templates/                      # Web 儀表板的 HTML 樣板
+        │       └── index.html                  # 儀表板主頁面樣板
         │
-        ├── config.py                   # 應用程式組態初始化
-        ├── database.py                 # 資料庫設定與 Session 管理
-        ├── logging_setup.py            # 全域日誌設定
-        ├── models.py                   # 資料庫 ORM 模型定義
-        └── settings.py                 # Pydantic 靜態設定管理
+        ├── config.py                           # 應用程式組態初始化 (載入YAML, 初始化幾何物件)
+        ├── database.py                         # 資料庫設定與 Session 管理
+        ├── logging_setup.py                    # 全域日誌設定模組
+        ├── models.py                           # 資料庫 ORM 模型定義 (Event, Person)
+        └── settings.py                         # Pydantic 靜態設定管理 (讀取 .env)
 ```
 ## 環境準備
 
