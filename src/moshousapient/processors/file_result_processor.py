@@ -150,6 +150,7 @@ class FileResultProcessor:
                 source_video_path=source_video_path,
                 output_path=output_path,
                 event_frames_data=event_frames,
+                all_frames_data=frames_data,
                 output_fps=int(Config.TARGET_FPS),
                 pre_event_sec=Config.PRE_EVENT_SECONDS,
                 post_event_sec=Config.POST_EVENT_SECONDS
