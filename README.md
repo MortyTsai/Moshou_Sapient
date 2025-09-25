@@ -4,7 +4,7 @@
 
 MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。系統採用了穩健的程序級隔離架構，能夠穩定處理 RTSP 即時影像流或本地影片檔案，執行物件偵測、追蹤與高階行為分析。當觸發特定規則時，系統會將結構化的分析結果與事件影片進行持久化儲存，為後續的數據分析和安全審計提供支持。
 
-https://github.com/user-attachments/assets/78e7c929-2b9e-4a4a-b807-37547966b975
+https://github.com/user-attachments/assets/fd18cbe4-fd20-442a-a2c1-8599121adf7e
 
 ## 專案狀態
 
