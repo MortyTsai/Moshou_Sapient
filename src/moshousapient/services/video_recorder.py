@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ..config import Config
 from .database_service import process_reid_and_identify_person, save_event
+from ..utils.video_utils import draw_visualizations
 
 
 def encode_and_send_video(
@@ -18,7 +19,6 @@ def encode_and_send_video(
         video_fps_mode: str = "SOURCE",
         target_fps: float = 30.0
 ):
-    """對指定的影像幀列表進行編碼、儲存，並處理 Re-ID 和通知。"""
     if not frame_data_list or actual_fps <= 0:
         logging.warning("[編碼器] 沒有影像幀或無效的 FPS，取消編碼。")
         return
@@ -36,7 +36,7 @@ def encode_and_send_video(
         f">>> [GPU 編碼器] 收到 {num_frames} 幀影像 (事件類型: {event_type})，開始以 {output_fps:.2f} FPS 進行硬體編碼...")
 
     now = datetime.now()
-    timestamp_for_filename = now.strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp_for_filename = now.strftime("%Y%m%d_%H%M%S")
     filename = f"{event_type}_{timestamp_for_filename}.mp4"
     save_path = os.path.join(Config.CAPTURES_DIR, filename)
     frame_size_str = f'{Config.ENCODE_WIDTH}x{Config.ENCODE_HEIGHT}'
@@ -52,27 +52,36 @@ def encode_and_send_video(
     else:  # QUALITY
         quality_level = '30'
         command.extend(['-rc', 'vbr', '-cq', quality_level, '-b:v', '0', '-maxrate', '10M'])
-    command.extend(['-pix_fmt', 'yuv4p', save_path])
+    command.extend(['-pix_fmt', 'yuv420p', save_path])
 
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
+    active_alert_ids = set()
     try:
         for frame_data in sampled_frame_data_list:
             frame = frame_data['frame'].copy()
-            # ... (此處可以添加繪圖邏輯，如果需要的話) ...
-            process.stdin.write(frame.tobytes())
+
+            current_frame_track_ids = {int(t[4]) for t in frame_data.get('tracks', [])}
+            for track_id in frame_data.get('tripwire_alert_ids', set()):
+                active_alert_ids.add(track_id)
+            active_alert_ids.intersection_update(current_frame_track_ids)
+
+            frame = draw_visualizations(frame, frame_data, active_alert_ids)
+
+            if process.stdin:
+                process.stdin.write(frame.tobytes())
+
     except (BrokenPipeError, IOError):
         logging.warning("[GPU 編碼器] 警告: FFmpeg 程序在寫入完成前已關閉管道。")
     finally:
         if process.stdin:
             process.stdin.close()
 
-    _, stderr_output = process.communicate()
-    return_code = process.wait()
-
-    if return_code != 0:
-        logging.error(
-            f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {return_code}\n{stderr_output.decode('utf-8', errors='ignore').strip()}")
+    stderr_output_bytes, _ = process.communicate()
+    if process.returncode != 0:
+        stderr_output = stderr_output_bytes.decode('utf-8', errors='ignore')
+        logging.error(f"[GPU 編碼器] 錯誤: FFmpeg 返回非零退出碼: {process.returncode}\n{stderr_output}")
         return
 
     logging.info(f"[資訊] 事件影片已儲存至: {save_path}")
