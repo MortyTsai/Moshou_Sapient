@@ -2,16 +2,12 @@
 
 import logging
 import yaml
-from pathlib import Path
-from typing import Union
+from typing import Union, List, Dict, Any
 
 from shapely.geometry import Polygon, LineString
 from shapely.errors import ShapelyError
 
-from .settings import settings, PROJECT_ROOT
-from .utils.video_utils import get_video_resolution
-
-# print(f"DEBUG [config.py]: Initial settings.VIDEO_FPS_MODE = {settings.VIDEO_FPS_MODE}")
+from .settings import settings
 
 class Config:
     """
@@ -46,7 +42,7 @@ class Config:
     TRACKER_CONFIG_PATH = str(settings.TRACKER_CONFIG_PATH)
     BEHAVIOR_CONFIG_PATH = str(settings.BEHAVIOR_CONFIG_PATH)
 
-    # --- 動態設定 ---
+    # --- 動態設定 (將由 main.py 初始化) ---
     ENCODE_WIDTH = settings.ENCODE_WIDTH
     ENCODE_HEIGHT = settings.ENCODE_HEIGHT
     ANALYSIS_WIDTH = settings.ANALYSIS_WIDTH
@@ -60,7 +56,7 @@ class Config:
 
     TRIPWIRES_ENABLED: bool = False
     TRIPWIRE_CONFIGS: list = []
-    TRIPWIRE_LINE_OBJECTS: list = []
+    TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
 
     # --- 類別方法 (初始化邏輯) ---
     @staticmethod
@@ -106,7 +102,7 @@ class Config:
                 logging.warning(f"[系統] 無法建立 ROI 區域，設定的座標點可能無效: {e}。ROI 功能將被停用。")
                 Config.ROI_POLYGON_OBJECT = None
         else:
-            logging.info("[系統] 未設定有效的 ROI 區域或座標點少於 3 個，ROI 功能已停用。")
+            logging.info("[系統] 未設定有效的 ROI 區域或座標點少於3個，ROI 功能已停用。")
             Config.ROI_POLYGON_OBJECT = None
 
     @staticmethod
@@ -123,7 +119,7 @@ class Config:
                     points = config.get("points")
                     direction = config.get("alert_direction", "both")
                     if not points or len(points) != 2:
-                        logging.warning(f"[系統] 警戒線定義無效 (需要 2 個點)，已跳過: {config}")
+                        logging.warning(f"[系統] 警戒線定義無效 (需要2個點)，已跳過: {config}")
                         continue
                     line = LineString(points)
                     Config.TRIPWIRE_LINE_OBJECTS.append({"line": line, "direction": direction})
@@ -134,30 +130,6 @@ class Config:
             logging.info(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
         else:
             logging.info("[系統] 未設定任何有效的虛擬警戒線。")
-
-    @staticmethod
-    def initialize_dynamic_settings():
-        """初始化那些可能需要根據環境或檔案內容動態決定的設定。"""
-        if Config.VIDEO_SOURCE_TYPE == "FILE":
-            logging.info("[系統] 偵測到檔案模式，正在動態獲取影片解析度...")
-            video_path_str = Config.VIDEO_FILE_PATH
-            if not video_path_str:
-                logging.warning("[系統] 檔案模式已啟用，但未提供 VIDEO_FILE_PATH。")
-                return
-
-            video_path = Path(video_path_str)
-            if not video_path.is_absolute():
-                video_path = PROJECT_ROOT / video_path
-
-            if video_path.exists():
-                resolution = get_video_resolution(str(video_path))
-                if resolution:
-                    Config.ENCODE_WIDTH, Config.ENCODE_HEIGHT = resolution
-                    logging.info(f"[系統] 已動態更新影像尺寸為: {resolution[0]}x{resolution[1]}")
-                else:
-                    logging.error("[系統] 無法獲取影片解析度，將使用預設值。")
-            else:
-                logging.warning(f"[系統] 未找到有效的影片檔案: {video_path}，將使用預設影像尺寸。")
 
     @staticmethod
     def initialize_static_settings():
