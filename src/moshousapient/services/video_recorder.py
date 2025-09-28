@@ -67,6 +67,12 @@ def encode_and_send_video(
         for frame_data in sampled_frame_data_list:
             frame = frame_data['frame'].copy()
 
+            # 檢查當前幀資料中包含的 alert_ids 集合
+            current_frame_alert_ids = frame_data.get('tripwire_alert_ids', set())
+            if current_frame_alert_ids:
+                logging.critical(
+                    f"[DRAWER_PROBE] Frame Time: {frame_data['time']:.2f}, Alert IDs: {current_frame_alert_ids}")
+
             overlay = frame.copy()
             if Config.ROI_ENABLED and Config.ROI_POLYGON_OBJECT:
                 roi_points = np.array(Config.ROI_POLYGON_OBJECT.exterior.coords, dtype=np.int32)
@@ -99,11 +105,12 @@ def encode_and_send_video(
                 box, track_id = track[:4], int(track[4])
                 x1, y1, x2, y2 = map(int, [box[0] * scale_x, box[1] * scale_y, box[2] * scale_x, box[3] * scale_y])
                 track_roi_status = frame_data.get('track_roi_status', {})
-                is_in_roi = track_roi_status.get(track_id, False)
 
                 box_color = (0, 255, 0)
-                if is_in_roi: box_color = (0, 255, 255)
-                if track_id in active_alert_ids: box_color = (0, 0, 255)
+                if track_roi_status.get(track_id, False):
+                    box_color = (0, 255, 255)
+                if track_id in current_frame_alert_ids:
+                    box_color = (0, 0, 255)
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
                 cv2.putText(frame, f"ID:{track_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
