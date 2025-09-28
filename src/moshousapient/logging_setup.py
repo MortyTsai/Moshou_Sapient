@@ -20,4 +20,6 @@ def setup_logging():
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setFormatter(log_formatter)
     root_logger.addHandler(stdout_handler)
+    behavior_logger = logging.getLogger("BehaviorAnalysis")
+    behavior_logger.setLevel(logging.WARNING)
     logging.info("日誌系統已成功初始化。")
