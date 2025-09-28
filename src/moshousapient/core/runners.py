@@ -60,12 +60,23 @@ class RTSPRunner(BaseRunner):
             return
 
         logging.info("[系統] 所有 Worker 已成功啟動並運行中。")
+
+        # ==================== START: DIAGNOSTIC PROBE ====================
+        logging.critical(f"[RUNNER_PROBE] 準備進入主迴圈。stop_event 狀態: {self.stop_event.is_set()}")
+
+        loop_count = 0
         while not self.stop_event.is_set():
+            loop_count += 1
+            logging.critical(f"[RUNNER_PROBE] 主迴圈執行中... (第 {loop_count} 次)")
+            # ===================== END: DIAGNOSTIC PROBE =====================
+
             time.sleep(Config.HEALTH_CHECK_INTERVAL)
             if not all(w.is_alive() for w in self.workers):
                 logging.critical(f"[系統] 偵測到 Worker 異常停止! 系統將準備關閉。")
                 self.stop_event.set()
                 break
+
+        logging.critical(f"[RUNNER_PROBE] 已退出主迴圈。stop_event 狀態: {self.stop_event.is_set()}")
 
 
 class FileRunner(BaseRunner):
