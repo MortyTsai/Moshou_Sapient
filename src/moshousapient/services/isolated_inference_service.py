@@ -1,5 +1,4 @@
 # src/moshousapient/services/isolated_inference_service.py
-
 import argparse
 import json
 import logging
@@ -9,6 +8,17 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, Union, List
 from types import SimpleNamespace
+from moshousapient.settings import settings
+from moshousapient.utils.geometry_utils import calculate_anchor_points, get_point_side_of_line
+
+try:
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    src_path = project_root / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+except ImportError as import_err:
+    print(f"緊急錯誤: 無法導入 MoshouSapient 核心模組。錯誤: {import_err}", file=sys.stderr)
+    sys.exit(1)
 
 import cv2
 import numpy as np
@@ -18,24 +28,10 @@ from shapely.errors import ShapelyError
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
 
-try:
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    src_path = project_root / "src"
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
-    from moshousapient.settings import settings
-    from moshousapient.utils.geometry_utils import get_point_side_of_line
-except ImportError as e:
-    print(f"緊急錯誤: 無法導入 MoshouSapient 核心模組。請確保從專案根目錄執行。錯誤: {e}", file=sys.stderr)
-    sys.exit(1)
-
-# --- 全域設定 ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - [IsolatedInferenceService] - %(levelname)s - %(message)s',
-                    stream=sys.stdout)
-
 
 class BehaviorConfig:
     """在隔離服務中載入並管理行為分析規則"""
+    ANCHOR_POINTS: Union[str, List[str]] = 'bottom_center'
     ROI_ENABLED: bool = False
     ROI_POLYGON_OBJECT: Union[Polygon, None] = None
     ROI_DWELL_TIME_THRESHOLD: float = 3.0
@@ -45,13 +41,13 @@ class BehaviorConfig:
     @staticmethod
     def load_from_yaml(config_path: Path):
         if not config_path.exists():
-            logging.warning(f"行為分析設定檔不存在: {config_path}。將停用高階行為分析。")
+            logging.warning(f"行為分析設定檔不存在: {config_path}。")
             return
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f) or {}
 
-            # 載入 ROI 設定
+            BehaviorConfig.ANCHOR_POINTS = config_data.get('anchor_points', 'bottom_center')
             roi_settings = config_data.get('roi', {})
             if roi_settings and roi_settings.get('enabled', False):
                 polygon_points = roi_settings.get('polygon_points', [])
@@ -59,11 +55,8 @@ class BehaviorConfig:
                     BehaviorConfig.ROI_POLYGON_OBJECT = Polygon(polygon_points)
                     BehaviorConfig.ROI_ENABLED = True
                     BehaviorConfig.ROI_DWELL_TIME_THRESHOLD = roi_settings.get('dwell_time_threshold', 3.0)
-                    logging.info(f"成功載入 ROI 區域，面積: {BehaviorConfig.ROI_POLYGON_OBJECT.area:.2f} 平方像素。")
-                else:
-                    logging.warning("ROI 已啟用但未提供有效的多邊形座標點 (至少3個點)。ROI 功能已停用。")
+                    logging.info(f"成功載入 ROI 區域, 面積: {BehaviorConfig.ROI_POLYGON_OBJECT.area:.2f}px。")
 
-            # 載入 Tripwire 設定
             tripwire_settings = config_data.get('tripwires', {})
             if tripwire_settings and tripwire_settings.get('enabled', False):
                 lines = tripwire_settings.get('lines', [])
@@ -73,12 +66,12 @@ class BehaviorConfig:
                     if points and len(points) == 2:
                         line = LineString(points)
                         direction = line_config.get("alert_direction", "both")
-                        BehaviorConfig.TRIPWIRE_LINE_OBJECTS.append({"line": line, "direction": direction})
+                        BehaviorConfig.TRIPWIRE_LINE_OBJECTS.append({'line': line, "direction": direction})
                 if BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
                     BehaviorConfig.TRIPWIRES_ENABLED = True
                     logging.info(f"成功載入 {len(BehaviorConfig.TRIPWIRE_LINE_OBJECTS)} 條警戒線。")
         except (yaml.YAMLError, ShapelyError, TypeError) as e:
-            logging.error(f"解析行為分析設定檔時發生錯誤: {e}。將停用高階行為分析。")
+            logging.error(f"解析行為分析設定檔時發生錯誤: {e}。")
 
 
 def load_models() -> Dict[str, Any]:
@@ -88,14 +81,12 @@ def load_models() -> Dict[str, Any]:
             logging.error("嚴重錯誤: 未偵測到 CUDA 設備。")
             return {}
         logging.info(f"偵測到 GPU: {torch.cuda.get_device_name(0)}")
-
         model = YOLO(settings.MODEL_PATH, task='detect')
         reid_model = YOLO(settings.REID_MODEL_PATH)
-
         logging.info("正在預熱 AI 模型...")
         warmup_frame = np.zeros((settings.ANALYSIS_HEIGHT, settings.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False, classes=[0])
-        reid_model.predict(warmup_frame, device=0, verbose=False)
+        reid_model.embed(warmup_frame, device=0, verbose=False)
         logging.info("AI 模型已成功載入並預熱。")
         return {"detector": model, "reid": reid_model}
     except Exception as e:
@@ -126,7 +117,9 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
     detector = models.get("detector")
     reid_model = models.get("reid")
     tracker = initialize_tracker()
+
     if not all([detector, reid_model, tracker]):
+        logging.error("一個或多個 AI 模型未能成功初始化。")
         sys.exit(1)
 
     cap = cv2.VideoCapture(str(video_path))
@@ -147,7 +140,7 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
 
         frame_low_res = cv2.resize(frame, (settings.ANALYSIS_WIDTH, settings.ANALYSIS_HEIGHT))
         dets_results = detector(frame_low_res, device=0, verbose=False, classes=[0], conf=0.4)
-        tracks = tracker.update(dets_results[0].boxes.cpu(), frame_low_res)
+        tracks = tracker.update(dets_results[0].boxes.cpu().numpy(), frame_low_res)
 
         current_frame_tracks = []
         if tracks.size > 0:
@@ -169,59 +162,92 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
             for track in tracks:
                 track_id = int(track[4])
                 current_tracked_ids.add(track_id)
-                x1, y1, x2, y2 = track[:4]
+                bbox = track[:4]
+
+                has_crossed_tripwire = False
+                if BehaviorConfig.TRIPWIRES_ENABLED:
+                    anchor_strategy = BehaviorConfig.ANCHOR_POINTS
+                    current_anchors = calculate_anchor_points(bbox, anchor_strategy)
+
+                    for i, current_anchor in enumerate(current_anchors):
+                        if not isinstance(current_anchor, Point): continue
+
+                        anchor_key = (track_id, i)
+                        last_position = track_last_positions.get(anchor_key)
+
+                        if last_position and last_position != current_anchor:
+                            movement_line = LineString([last_position, current_anchor])
+                            for tripwire_obj in BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
+                                tripwire_line = tripwire_obj["line"]
+                                alert_direction = tripwire_obj["direction"]
+
+                                if movement_line.intersects(tripwire_line):
+                                    p1_coords, p2_coords = tripwire_line.coords[0], tripwire_line.coords[1]
+                                    p1, p2 = Point(p1_coords), Point(p2_coords)
+
+                                    side_before = get_point_side_of_line(last_position, p1, p2)
+                                    side_after = get_point_side_of_line(current_anchor, p1, p2)
+
+                                    if side_before != 0 and side_after != 0 and side_before != side_after:
+                                        # --- 修正開始：反轉左右判斷以適應螢幕座標系 ---
+                                        crossed_to_right = side_before == -1 and side_after == 1
+                                        crossed_to_left = side_before == 1 and side_after == -1
+                                        # --- 修正結束 ---
+
+                                        should_alert = (alert_direction == "both" or
+                                                        (alert_direction == "cross_to_right" and crossed_to_right) or
+                                                        (alert_direction == "cross_to_left" and crossed_to_left))
+
+                                        if should_alert:
+                                            has_crossed_tripwire = True
+                                            break
+
+                        track_last_positions[anchor_key] = current_anchor
+                        if has_crossed_tripwire: break
 
                 is_in_roi = False
                 if BehaviorConfig.ROI_ENABLED and BehaviorConfig.ROI_POLYGON_OBJECT:
-                    bottom_center_point = Point((x1 + x2) / 2, y2)
-                    is_in_roi = BehaviorConfig.ROI_POLYGON_OBJECT.contains(bottom_center_point)
+                    anchor_strategy = BehaviorConfig.ANCHOR_POINTS
+                    anchors = calculate_anchor_points(bbox, anchor_strategy)
+                    for anchor in anchors:
+                        if isinstance(anchor, Point) and BehaviorConfig.ROI_POLYGON_OBJECT.contains(anchor):
+                            is_in_roi = True
+                            break
 
-                has_crossed_tripwire = False
-                current_position = Point((x1 + x2) / 2, y2)
-                last_position = track_last_positions.get(track_id)
-
-                if BehaviorConfig.TRIPWIRES_ENABLED and last_position and last_position != current_position:
-                    movement_line = LineString([last_position, current_position])
-                    for tripwire_obj in BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
-                        tripwire_line, alert_direction = tripwire_obj["line"], tripwire_obj["direction"]
-                        if movement_line.intersects(tripwire_line):
-                            p1, p2 = tripwire_line.coords
-                            side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
-                            side_after = get_point_side_of_line(current_position, Point(p1), Point(p2))
-                            if side_before != 0 and side_after != 0 and side_before != side_after:
-                                crossed_to_right = side_before == 1 and side_after == -1
-                                crossed_to_left = side_before == -1 and side_after == 1
-                                if (alert_direction == "both" or
-                                        (alert_direction == "cross_to_right" and crossed_to_right) or
-                                        (alert_direction == "cross_to_left" and crossed_to_left)):
-                                    has_crossed_tripwire = True
-                                    break
-
-                track_last_positions[track_id] = current_position
+                anchors = calculate_anchor_points(bbox, BehaviorConfig.ANCHOR_POINTS)
+                anchor_coords = [list(a.coords)[0] for a in anchors if isinstance(a, Point)]
 
                 current_frame_tracks.append({
-                    "track_id": track_id, "box_xyxy": [float(coord) for coord in track[:4]],
-                    "confidence": float(track[5]), "feature": reid_features_map.get(track_id),
-                    "is_in_roi": is_in_roi, "has_crossed_tripwire": has_crossed_tripwire
+                    "track_id": track_id, "box_xyxy": [float(c) for c in bbox],
+                    "confidence": float(track[5]) if len(track) > 5 else None,
+                    "feature": reid_features_map.get(track_id), "is_in_roi": is_in_roi,
+                    "has_crossed_tripwire": has_crossed_tripwire,
+                    "anchors": anchor_coords
                 })
 
-            disappeared_ids = set(track_last_positions.keys()) - current_tracked_ids
-            for track_id in disappeared_ids:
-                del track_last_positions[track_id]
+            disappeared_anchor_keys = set(track_last_positions.keys())
+            for track in tracks:
+                track_id = int(track[4])
+                num_anchors = len(calculate_anchor_points(track[:4], BehaviorConfig.ANCHOR_POINTS))
+                for i in range(num_anchors):
+                    disappeared_anchor_keys.discard((track_id, i))
+
+            for key in disappeared_anchor_keys:
+                if key in track_last_positions:
+                    del track_last_positions[key]
 
         all_frame_data.append({"frame_index": frame_count, "tracks": current_frame_tracks})
 
+    source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     cap.release()
     end_time = time.time()
     processing_duration = end_time - start_time
-    logging.info(f"影片分析完成。共處理 {frame_count} 幀，耗時 {processing_duration:.2f} 秒。")
+    logging.info(f"影片分析完成。共處理 {frame_count} 幀, 耗時 {processing_duration:.2f} 秒。")
 
     final_results = {
         "video_path": str(video_path), "status": "success",
-        "analytics": {
-            "total_frames": frame_count, "source_fps": cap.get(cv2.CAP_PROP_FPS) or 30.0,
-            "processing_duration_sec": processing_duration,
-        },
+        "analytics": {"total_frames": frame_count, "source_fps": source_fps,
+                      "processing_duration_sec": processing_duration},
         "frames": all_frame_data
     }
 
@@ -229,21 +255,19 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
     with open(output_json_path, 'w', encoding='utf-8') as f:
         json.dump(final_results, f)
 
-
 def main():
     """主函式：解析參數並啟動推論"""
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - [IsolatedInferenceService] - %(levelname)s - %(message)s',
+                        stream=sys.stdout)
+
     parser = argparse.ArgumentParser(description="MoshouSapient - 獨立 AI 推論服務")
     parser.add_argument('--video-path', type=Path, required=True)
     parser.add_argument('--output-json-path', type=Path, required=True)
     parser.add_argument('--behavior-config-path', type=Path, required=True)
     args = parser.parse_args()
 
-    if not settings:
-        logging.error("設定模組未成功載入。")
-        sys.exit(1)
-
     BehaviorConfig.load_from_yaml(args.behavior_config_path)
-
     models = load_models()
     if not models:
         sys.exit(1)
