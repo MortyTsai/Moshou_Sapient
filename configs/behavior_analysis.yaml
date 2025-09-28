@@ -26,7 +26,7 @@
 #   您可以提供一個列表，例如 ['bottom_left', 'bottom_right']。
 #   在這種模式下，只要列表中的任何一個錨點滿足觸發條件，規則就會被觸發。
 #
-anchor_points: 'centroid'
+anchor_points: ['bottom_center']
 
 
 # ===================================================================
@@ -34,7 +34,7 @@ anchor_points: 'centroid'
 # ===================================================================
 # 用於偵測是否有物體在特定多邊形區域內停留時間過長。
 roi:
-  enabled: false
+  enabled: true
 
   # [可選] 覆寫全域錨點設定。
   # [!!] 注意: 此功能依賴於 'anchor_points' 系統的完成。
@@ -42,10 +42,10 @@ roi:
 
   # ROI 區域的頂點座標列表。
   polygon_points:
-    - [640, 200]
-    - [1280, 200]
-    - [1280, 720]
-    - [640, 720]
+    - [832, 608]
+    - [129, 569]
+    - [416, 509]
+    - [774, 522]
 
   # 觸發「停留警報」所需的時間閾值 (秒)。
   dwell_time_threshold: 3.0
@@ -59,11 +59,11 @@ tripwires:
   enabled: true
 
   lines:
-    - points: [[500, 736], [500, 0]]
+    - points: [[129, 569], [832, 608]]
       # [可選] 覆寫全域錨點設定。
       # [!!] 注意: 此功能依賴於 'anchor_points' 系統的完成。
       # anchor_points: 'centroid'
-      alert_direction: "cross_to_right"
+      alert_direction: "cross_to_left"
 
 
 # ===================================================================
