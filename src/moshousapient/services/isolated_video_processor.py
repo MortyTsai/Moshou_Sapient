@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 from moshousapient.config import Config
 
-# 將導入和初始化移到全域，避免 except 作用域問題
 try:
     project_root = Path(__file__).resolve().parent.parent.parent.parent
     src_path = project_root / "src"
@@ -13,7 +12,6 @@ try:
         sys.path.insert(0, str(src_path))
 
 
-    # 預先初始化，這樣即使檔案不存在，Config 類也已載入
     Config.initialize_static_settings()
 except ImportError as e:
     print(f"緊急錯誤: 無法導入 MoshouSapient 核心模組。錯誤: {e}", file=sys.stderr)
@@ -23,7 +21,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [VideoProcessorSer
 
 
 def process_video_event(input_data_path: str, output_path: str, event_type: str):
-    logging.info(f"開始處理事件 '{event_type}'，從資料檔案: {input_data_path}")
+    """
+    處理單個影片事件：讀取幀資料、繪製視覺化元素、並使用 FFmpeg 硬體編碼儲存影片。
+    此函式在一個獨立的子程序中執行。
+    """
+    logging.info(f"開始處理事件 '{event_type}', 從資料檔案: {input_data_path}")
 
     frames_data = []
     try:
@@ -32,7 +34,6 @@ def process_video_event(input_data_path: str, output_path: str, event_type: str)
     except Exception as e:
         logging.error(f"無法讀取或反序列化輸入資料檔案: {e}")
     finally:
-        # 修正：移除對 'e' 的隱藏引用
         if os.path.exists(input_data_path):
             try:
                 os.remove(input_data_path)
@@ -41,7 +42,7 @@ def process_video_event(input_data_path: str, output_path: str, event_type: str)
                 logging.error(f"清理臨時資料檔案失敗: {remove_error}")
 
     if not frames_data:
-        logging.warning("輸入資料為空，不進行處理。")
+        logging.warning("輸入資料為空, 不進行處理。")
         return
 
     start_time = frames_data[0]['time']
@@ -60,40 +61,94 @@ def process_video_event(input_data_path: str, output_path: str, event_type: str)
     process = subprocess.Popen(ffmpeg_encode_cmd, stdin=subprocess.PIPE)
     logging.info(f"開始對 {len(frames_data)} 幀影像進行繪圖和硬體編碼...")
 
-    for frame_data in frames_data:
+    for frame_idx, frame_data in enumerate(frames_data):
         frame = frame_data['frame']
         overlay = frame.copy()
 
-        # 修正：使用正確的屬性名 ROI_POLYGON_OBJECT
+        # 1. 繪製 ROI 和 Tripwire 等靜態疊加層
         if Config.ROI_ENABLED and Config.ROI_POLYGON_OBJECT:
             roi_points = np.array(Config.ROI_POLYGON_OBJECT.exterior.coords, dtype=np.int32)
             cv2.fillPoly(overlay, [roi_points], color=(255, 255, 0))
             cv2.polylines(overlay, [roi_points], isClosed=True, color=(255, 255, 0), thickness=2)
 
-        frame = cv2.addWeighted(overlay, 0.2, frame, 0.8, 0)
+        if Config.TRIPWIRES_ENABLED and Config.TRIPWIRE_LINE_OBJECTS:
+            line_thickness, tip_length = 4, 0.05
+            for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
+                line = tripwire_obj["line"]
+                direction = tripwire_obj["direction"]
+                p1_coords, p2_coords = line.coords[0], line.coords[1]
+                p1, p2 = (int(p1_coords[0]), int(p1_coords[1])), (int(p2_coords[0]), int(p2_coords[1]))
+
+                if direction == "cross_to_right":
+                    cv2.arrowedLine(overlay, p1, p2, (0, 0, 255), line_thickness, tipLength=tip_length)
+                elif direction == "cross_to_left":
+                    cv2.arrowedLine(overlay, p2, p1, (0, 0, 255), line_thickness, tipLength=tip_length)
+                else:
+                    cv2.line(overlay, p1, p2, (0, 0, 255), line_thickness)
+
+        # 2. 繪製追蹤物件
         current_frame_alert_ids = frame_data.get('tripwire_alert_ids', set())
+        track_roi_status = frame_data.get('track_roi_status', {})
 
-        for track in frame_data.get('tracks', []):
-            box, track_id = track[:4], int(track[4])
+        # 找出所有活躍的目標ID
+        active_track_ids = current_frame_alert_ids.union(
+            {tid for tid, in_roi in track_roi_status.items() if in_roi}
+        )
+
+        for track_info in frame_data.get('tracks', []):
+            box, track_id = track_info['box_xyxy'], track_info['track_id']
             x1, y1, x2, y2 = map(int, box)
-            track_roi_status = frame_data.get('track_roi_status', {})
 
-            box_color = (0, 255, 0)
-            if track_roi_status.get(track_id, False):
-                box_color = (0, 255, 255)
-            if track_id in current_frame_alert_ids:
-                box_color = (0, 0, 255)
+            is_active = track_id in active_track_ids
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-            cv2.putText(frame, f"ID:{track_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
+            # 根據目標是否活躍決定顏色和透明度
+            if is_active:
+                alpha = 1.0
+                if track_id in current_frame_alert_ids:
+                    box_color = (0, 0, 255)  # 觸發警戒線：紅色
+                else:
+                    box_color = (0, 255, 255)  # 在 ROI 內：黃色
+            else:
+                alpha = 0.5
+                box_color = (128, 128, 128)  # 非活躍目標：灰色
+
+            # 創建一個用於繪製半透明框的臨時疊加層
+            track_overlay = overlay.copy()
+
+            # 繪製 BBox
+            cv2.rectangle(track_overlay, (x1, y1), (x2, y2), box_color, 2)
+
+            # 繪製錨點
+            anchor_coords = track_info.get('anchors', [])
+            for anchor in anchor_coords:
+                center_point = (int(anchor[0]), int(anchor[1]))
+                cv2.circle(track_overlay, center_point, 5, box_color, -1)
+
+            # 將帶有透明度的 track_overlay 融合回主 overlay
+            overlay = cv2.addWeighted(track_overlay, alpha, overlay, 1 - alpha, 0)
+
+            # 繪製文字 (文字不使用透明效果以保證可讀性)
+            cv2.putText(overlay, f'ID:{track_id}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
+
+        # 3. 將包含所有繪圖的 overlay 與原始幀融合
+        frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
+
+        # 4. 繪製狀態資訊疊加層
+        info_panel = np.zeros((80, width, 3), dtype=np.uint8)
+        frame[0:80, 0:width] = cv2.addWeighted(frame[0:80, 0:width], 0.5, info_panel, 0.5, 0)
+        event_text = f"EVENT: {event_type.upper()}"
+        cv2.putText(frame, event_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+        elapsed_time = frame_data['time'] - start_time
+        duration_text = f"DURATION: {elapsed_time:.1f}s"
+        cv2.putText(frame, duration_text, (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
         if process.stdin:
             process.stdin.write(frame.tobytes())
 
-    process.stdin.close()
+    if process.stdin:
+        process.stdin.close()
     process.wait()
     logging.info(f"事件影片已成功處理並儲存至: {output_path}")
-
 
 def main():
     parser = argparse.ArgumentParser(description="MoshouSapient - 獨立影片處理服務")
