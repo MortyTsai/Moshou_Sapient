@@ -3,11 +3,11 @@
 import logging
 import yaml
 from typing import Union, List, Dict, Any
-
 from shapely.geometry import Polygon, LineString
 from shapely.errors import ShapelyError
 
 from .settings import settings
+
 
 class Config:
     """
@@ -36,7 +36,7 @@ class Config:
     HEALTH_CHECK_INTERVAL = settings.HEALTH_CHECK_INTERVAL
 
     # --- 路徑設定 ---
-    CAPTURES_DIR = str(settings.CAPTURES_DIR)
+    CAPTURES_DIR = settings.CAPTURES_DIR
     MODEL_PATH = str(settings.MODEL_PATH)
     REID_MODEL_PATH = str(settings.REID_MODEL_PATH)
     TRACKER_CONFIG_PATH = str(settings.TRACKER_CONFIG_PATH)
@@ -49,42 +49,65 @@ class Config:
     ANALYSIS_HEIGHT = settings.ANALYSIS_HEIGHT
 
     # --- 行為分析參數 (將從 YAML 載入) ---
+    # 錨點系統設定
+    ANCHOR_POINTS: Union[str, List[str]] = 'bottom_center'
+
+    # ROI 相關設定
     ROI_ENABLED: bool = False
-    ROI_POLYGON_POINTS: list = []
-    ROI_DWELL_TIME_THRESHOLD: float = 3.0
+    ROI_SETTINGS: Dict[str, Any] = {}
     ROI_POLYGON_OBJECT: Union[Polygon, None] = None
 
+    # Tripwire 相關設定
     TRIPWIRES_ENABLED: bool = False
-    TRIPWIRE_CONFIGS: list = []
+    TRIPWIRE_SETTINGS: Dict[str, Any] = {}
     TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
 
-    # --- 類別方法 (初始化邏輯) ---
+    # 遮蔽警報設定
+    OCCLUSION_ALERT_ENABLED: bool = False
+    OCCLUSION_ALERT_SETTINGS: Dict[str, Any] = {}
+
+    # 畫面異常警報設定
+    SCENE_ANOMALY_ALERT_ENABLED: bool = False
+    SCENE_ANOMALY_ALERT_SETTINGS: Dict[str, Any] = {}
+
     @staticmethod
     def _load_behavior_config():
-        """從 behavior_analysis.yaml 載入 ROI 和 Tripwire 設定。"""
+        """從 behavior_analysis.yaml 載入所有行為分析規則。"""
         try:
             with open(Config.BEHAVIOR_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                behavior_config = yaml.safe_load(f)
+                behavior_config = yaml.safe_load(f) or {}
 
-            # 載入 ROI 設定
-            roi_settings = behavior_config.get('roi', {})
-            if roi_settings and roi_settings.get('enabled', False):
+            # 1. 載入全域錨點設定 (提供預設值以確保相容性)
+            Config.ANCHOR_POINTS = behavior_config.get('anchor_points', 'bottom_center')
+
+            # 2. 載入 ROI 設定
+            Config.ROI_SETTINGS = behavior_config.get('roi', {})
+            if Config.ROI_SETTINGS.get('enabled', False):
                 Config.ROI_ENABLED = True
-                Config.ROI_POLYGON_POINTS = roi_settings.get('polygon_points', [])
-                Config.ROI_DWELL_TIME_THRESHOLD = roi_settings.get('dwell_time_threshold', 3.0)
                 logging.info("[系統] 已成功載入 ROI 設定。")
 
-            # 載入 Tripwire 設定
-            tripwire_settings = behavior_config.get('tripwires', {})
-            if tripwire_settings and tripwire_settings.get('enabled', False):
+            # 3. 載入 Tripwire 設定
+            Config.TRIPWIRE_SETTINGS = behavior_config.get('tripwires', {})
+            if Config.TRIPWIRE_SETTINGS.get('enabled', False):
                 Config.TRIPWIRES_ENABLED = True
-                Config.TRIPWIRE_CONFIGS = tripwire_settings.get('lines', [])
                 logging.info("[系統] 已成功載入 Tripwires 設定。")
 
+            # 4. 載入遮蔽警報設定
+            Config.OCCLUSION_ALERT_SETTINGS = behavior_config.get('occlusion_alerts', {})
+            if Config.OCCLUSION_ALERT_SETTINGS.get('enabled', False):
+                Config.OCCLUSION_ALERT_ENABLED = True
+                logging.info("[系統] 已成功載入 Occlusion Alert 設定。")
+
+            # 5. 載入畫面異常警報設定
+            Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get('scene_anomaly_alerts', {})
+            if Config.SCENE_ANOMALY_ALERT_SETTINGS.get('enabled', False):
+                Config.SCENE_ANOMALY_ALERT_ENABLED = True
+                logging.info("[系統] 已成功載入 Scene Anomaly Alert 設定。")
+
         except FileNotFoundError:
-            logging.warning(f"[系統] 找不到行為分析設定檔: {Config.BEHAVIOR_CONFIG_PATH}。將停用 ROI 和 Tripwire 功能。")
+            logging.warning(f"[系統] 找不到行為分析設定檔: {Config.BEHAVIOR_CONFIG_PATH}。將停用所有高階行為分析功能。")
         except yaml.YAMLError as e:
-            logging.error(f"[系統] 解析行為分析設定檔時發生錯誤: {e}。將停用 ROI 和 Tripwire 功能。")
+            logging.error(f"[系統] 解析行為分析設定檔時發生錯誤: {e}。將停用所有高階行為分析功能。")
 
     @staticmethod
     def _initialize_roi():
@@ -94,40 +117,50 @@ class Config:
             Config.ROI_POLYGON_OBJECT = None
             return
 
-        if Config.ROI_POLYGON_POINTS and len(Config.ROI_POLYGON_POINTS) >= 3:
+        polygon_points = Config.ROI_SETTINGS.get('polygon_points', [])
+        if polygon_points and len(polygon_points) >= 3:
             try:
-                Config.ROI_POLYGON_OBJECT = Polygon(Config.ROI_POLYGON_POINTS)
-                logging.info(f"[系統] 成功建立 ROI 區域，面積: {Config.ROI_POLYGON_OBJECT.area} 平方像素。")
+                Config.ROI_POLYGON_OBJECT = Polygon(polygon_points)
+                logging.info(f"[系統] 成功建立 ROI 區域，面積: {Config.ROI_POLYGON_OBJECT.area:.2f} 平方像素。")
             except (ShapelyError, TypeError) as e:
                 logging.warning(f"[系統] 無法建立 ROI 區域，設定的座標點可能無效: {e}。ROI 功能將被停用。")
                 Config.ROI_POLYGON_OBJECT = None
         else:
-            logging.info("[系統] 未設定有效的 ROI 區域或座標點少於3個，ROI 功能已停用。")
+            logging.info("[系統] 未設定有效的 ROI 區域或座標點少於 3 個，ROI 功能已停用。")
             Config.ROI_POLYGON_OBJECT = None
 
     @staticmethod
     def _initialize_tripwires():
-        """根據載入的設定，初始化所有警戒線物件。"""
+        """根據載入的設定，初始化所有警戒線 Shapely LineString 物件。"""
         Config.TRIPWIRE_LINE_OBJECTS.clear()
         if not Config.TRIPWIRES_ENABLED:
             logging.info("[系統] Tripwire 功能未啟用，已跳過初始化。")
             return
 
-        if Config.TRIPWIRE_CONFIGS:
-            for config in Config.TRIPWIRE_CONFIGS:
+        lines = Config.TRIPWIRE_SETTINGS.get('lines', [])
+        if lines:
+            for config in lines:
                 try:
                     points = config.get("points")
-                    direction = config.get("alert_direction", "both")
                     if not points or len(points) != 2:
-                        logging.warning(f"[系統] 警戒線定義無效 (需要2個點)，已跳過: {config}")
+                        logging.warning(f"[系統] 警戒線定義無效 (需要 2 個點)，已跳過: {config}")
                         continue
+
                     line = LineString(points)
-                    Config.TRIPWIRE_LINE_OBJECTS.append({"line": line, "direction": direction})
+                    direction = config.get("alert_direction", "both")
+                    # 儲存解析後的物件和原始設定
+                    Config.TRIPWIRE_LINE_OBJECTS.append({
+                        "line": line,
+                        "direction": direction,
+                        "config": config  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
+                    })
                 except (ShapelyError, TypeError, KeyError) as e:
                     logging.warning(f"[系統] 無法建立警戒線，設定可能無效: {e}。已跳過該設定: {config}")
 
-        if Config.TRIPWIRE_LINE_OBJECTS:
-            logging.info(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
+            if Config.TRIPWIRE_LINE_OBJECTS:
+                logging.info(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
+            else:
+                logging.info("[系統] 未設定任何有效的虛擬警戒線。")
         else:
             logging.info("[系統] 未設定任何有效的虛擬警戒線。")
 
