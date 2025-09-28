@@ -1,10 +1,7 @@
-# src/moshousapient/processors/file_result_processor.py
-
 import logging
 import os
 from datetime import datetime
 from typing import Dict, Any, List, Tuple
-
 import numpy as np
 
 from ..config import Config
@@ -23,10 +20,6 @@ class FileResultProcessor:
 
     @staticmethod
     def _is_frame_active(frame_data: Dict[str, Any]) -> Tuple[bool, str | None]:
-        """
-        判斷一個幀是否活躍，並返回活躍原因（事件類型）。
-        活躍定義：任何追蹤目標觸發了 ROI 或警戒線。
-        """
         active_event_type = None
         highest_priority = -1
 
@@ -46,83 +39,52 @@ class FileResultProcessor:
         return active_event_type is not None, active_event_type
 
     def _segment_events(self, frames_data: List[Dict], source_fps: float) -> List[Dict[str, Any]]:
-        if not frames_data:
-            return []
-
-        trigger_points = []
+        if not frames_data or source_fps <= 0: return []
         frame_activity = [self._is_frame_active(f) for f in frames_data]
+        active_indices = [i for i, (is_active, _) in enumerate(frame_activity) if is_active]
+        if not active_indices: return []
 
-        is_currently_active = False
-        for i, (is_active, event_type) in enumerate(frame_activity):
-            if is_active and not is_currently_active:
-                trigger_points.append({
-                    "frame_index": frames_data[i]['frame_index'],
-                    "event_type": event_type
-                })
-            is_currently_active = is_active
-
-        if not trigger_points:
-            logging.info("未偵測到任何有效的事件觸發點。")
-            return []
-
+        max_frames_total = int(Config.MAX_EVENT_DURATION * source_fps)
         pre_frames = int(Config.PRE_EVENT_SECONDS * source_fps)
         post_frames = int(Config.POST_EVENT_SECONDS * source_fps)
-
-        intervals = []
-        for point in trigger_points:
-            start_idx = point["frame_index"] - 1
-            end_idx = start_idx
-            for i in range(start_idx, len(frame_activity)):
-                if frame_activity[i][0]:
-                    end_idx = i
-                elif (i - end_idx) > post_frames:
-                    break
-
-            start_frame = frames_data[start_idx]['frame_index']
-            end_frame = frames_data[end_idx]['frame_index']
-
-            intervals.append([
-                max(1, start_frame - pre_frames),
-                min(len(frames_data), end_frame + post_frames)
-            ])
-
-        if not intervals:
-            return []
-
-        intervals.sort(key=lambda x: x[0])
-        merged_intervals = [intervals[0]]
-        for current in intervals[1:]:
-            last = merged_intervals[-1]
-            if current[0] <= last[1]:
-                last[1] = max(last[1], current[1])
-            else:
-                merged_intervals.append(current)
+        max_frames_core = max(1, max_frames_total - pre_frames - post_frames)
 
         events = []
-        frames_map = {f['frame_index']: f for f in frames_data}
-        activity_map = {frames_data[i]['frame_index']: activity for i, activity in enumerate(frame_activity)}
+        ptr = 0
+        while ptr < len(active_indices):
+            core_start_index = active_indices[ptr]
+            core_end_index = min(core_start_index + max_frames_core - 1, len(frames_data) - 1)
 
-        for start, end in merged_intervals:
-            event_frames = [frames_map[i] for i in range(start, end + 1) if i in frames_map]
+            actual_core_end_index = core_start_index
+            next_ptr = ptr
+            for i in range(ptr, len(active_indices)):
+                if active_indices[i] <= core_end_index:
+                    actual_core_end_index = active_indices[i]
+                    next_ptr = i
+                else:
+                    break
+
+            read_start_index = max(0, core_start_index - pre_frames)
+            read_end_index = min(len(frames_data), actual_core_end_index + post_frames + 1)
+
+            segment_frames = frames_data[read_start_index:read_end_index]
 
             highest_priority = -1
-            final_event_type = "unknown_event"
-            for i in range(start, end + 1):
-                if i in activity_map:
-                    is_active, event_type = activity_map[i]
-                    if is_active:
-                        priority = self.EVENT_TYPE_PRIORITY.get(event_type, -1)
-                        if priority > highest_priority:
-                            highest_priority = priority
-                            final_event_type = event_type
+            final_event_type = "person_detected"
+            for i in range(core_start_index, actual_core_end_index + 1):
+                _, event_type = frame_activity[i]
+                priority = self.EVENT_TYPE_PRIORITY.get(event_type, -1)
+                if priority > highest_priority:
+                    highest_priority = priority
+                    final_event_type = event_type
 
-            if event_frames:
+            if segment_frames:
                 events.append({
-                    "frames": event_frames,
-                    "event_type": final_event_type
+                    "frames": segment_frames,
+                    "event_type": final_event_type,
+                    "event_start_frame": frames_data[core_start_index]['frame_index']
                 })
-
-        logging.info(f"事件分段完成，共偵測到 {len(events)} 個獨立事件。")
+            ptr = next_ptr + 1
         return events
 
     def process_results(self, results: Dict[str, Any]):
@@ -137,34 +99,30 @@ class FileResultProcessor:
         event_groups = self._segment_events(frames_data, source_fps)
 
         for i, event_data in enumerate(event_groups):
-            event_frames = event_data["frames"]
-            event_type = event_data["event_type"]
-
-            logging.info(f"正在處理事件 #{i + 1}/{len(event_groups)} (類型: {event_type})...")
-
             now = datetime.now()
+            event_type = event_data["event_type"]
             filename = f"{event_type}_{now.strftime('%Y%m%d_%H%M%S')}_evt{i + 1}.mp4"
             output_path = os.path.join(Config.CAPTURES_DIR, filename)
 
+            logging.info(f"正在處理事件 #{i + 1}/{len(event_groups)} (類型: {event_type})...")
             success = draw_and_encode_segment(
                 source_video_path=source_video_path,
                 output_path=output_path,
-                event_frames_data=event_frames,
-                all_frames_data=frames_data,
-                output_fps=int(Config.TARGET_FPS),
-                pre_event_sec=Config.PRE_EVENT_SECONDS,
-                post_event_sec=Config.POST_EVENT_SECONDS
+                event_frames_data=event_data["frames"],
+                event_type=event_data["event_type"],
+                event_start_frame_index=event_data["event_start_frame"]
             )
 
             if success:
-                all_features = [np.array(track['feature']) for frame in event_frames for track in frame['tracks'] if
+                all_features = [np.array(track['feature']) for frame in event_data["frames"] for track in
+                                frame['tracks'] if
                                 track.get('feature')]
                 person_id = None
                 if all_features:
                     person_id = process_reid_and_identify_person(all_features)
                 save_event(output_path, event_type, person_id)
                 if self.notifier:
-                    message = f"**事件警報!**\n類型: `{event_type}`\n來源: `{os.path.basename(source_video_path)}`"
+                    message = f"**事件警報!**\n 類型: `{event_type}` \n 來源: `{os.path.basename(source_video_path)}`"
                     self.notifier.schedule_notification(message, file_path=output_path)
             else:
                 logging.error(f"事件 #{i + 1} 的影片片段生成失敗。")
