@@ -1,10 +1,7 @@
-# src/moshousapient/utils/video_utils.py
-
 import subprocess
 import json
 import logging
 import cv2
-import os
 from typing import List, Dict, Any
 import numpy as np
 
@@ -13,7 +10,6 @@ from ..config import Config
 
 
 def get_video_resolution(video_path: str) -> tuple[int, int] | None:
-    # ... 此函式不變 ...
     command = [
         'ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height', '-of', 'json', video_path
@@ -36,59 +32,57 @@ def draw_and_encode_segment(
         source_video_path: str,
         output_path: str,
         event_frames_data: List[Dict[str, Any]],
-        all_frames_data: List[Dict[str, Any]],
-        output_fps: int,
-        pre_event_sec: float,
-        post_event_sec: float
+        event_type: str,  # <--- 恢復這個參數
+        event_start_frame_index: int
 ) -> bool:
     if not event_frames_data: return False
     cap = cv2.VideoCapture(source_video_path)
-    if not cap.isOpened():
-        logging.error(f"無法開啟來源影片: {source_video_path}")
-        return False
+    if not cap.isOpened(): return False
 
     source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     scale_x = source_width / settings.ANALYSIS_WIDTH
     scale_y = source_height / settings.ANALYSIS_HEIGHT
-
-    frame_indices = sorted([f['frame_index'] for f in event_frames_data])
-    start_frame, end_frame = frame_indices[0], frame_indices[-1]
-
-    buffer_pre_frames = int(pre_event_sec * source_fps)
-    buffer_post_frames = int(post_event_sec * source_fps)
-
-    read_start_frame = max(1, start_frame - buffer_pre_frames)
-    read_end_frame = min(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), end_frame + buffer_post_frames)
-
-    full_draw_data_map = {f['frame_index']: f for f in all_frames_data}
-    event_frames_indices = {f['frame_index'] for f in event_frames_data}
+    output_fps = Config.TARGET_FPS if Config.VIDEO_FPS_MODE == "TARGET" and Config.TARGET_FPS > 0 else source_fps
 
     command = [
-        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{source_width}x{source_height}',
         '-pix_fmt', 'bgr24', '-r', str(source_fps),
         '-i', '-',
-        '-c:v', 'hevc_nvenc', '-preset', 'p6',
-        '-r', str(output_fps),
-        '-pix_fmt', 'yuv420p', output_path
+        '-c:v', 'hevc_nvenc', '-preset', 'p6'
     ]
+    if Config.VIDEO_ENCODING_MODE == "BALANCED":
+        bitrate_str = f"{Config.TARGET_BITRATE_MBPS}M"
+        command.extend(['-rc', 'cbr', '-b:v', bitrate_str, '-maxrate', bitrate_str])
+    else:
+        quality_level = '23'
+        command.extend(['-rc', 'vbr', '-cq', quality_level, '-b:v', '0', '-maxrate', '20M'])
+    command.extend(['-r', str(output_fps), '-pix_fmt', 'yuv420p', output_path])
 
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    logging.info(f"啟動 FFmpeg 為事件影片進行編碼: {os.path.basename(output_path)}")
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, event_frames_data[0]['frame_index'] - 1)
 
     active_alert_ids = set()
+    event_frames_indices = {f['frame_index'] for f in event_frames_data if f['frame_index'] >= event_start_frame_index}
 
     try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, read_start_frame - 1)
-        for current_frame_index in range(read_start_frame, read_end_frame + 1):
+        for frame_data in event_frames_data:
             ret, frame = cap.read()
             if not ret: break
 
-            frame_data = full_draw_data_map.get(current_frame_index, {})
+            current_frame_index = frame_data['frame_index']
+
+            if current_frame_index in event_frames_indices:
+                for track in frame_data.get('tracks', []):
+                    if track.get('has_crossed_tripwire'):
+                        active_alert_ids.add(track['track_id'])
 
             overlay = frame.copy()
+
             if Config.ROI_ENABLED and Config.ROI_POLYGON_OBJECT:
                 roi_points = np.array(Config.ROI_POLYGON_OBJECT.exterior.coords, dtype=np.int32)
                 roi_points_scaled = (roi_points * np.array([scale_x, scale_y])).astype(np.int32)
@@ -107,58 +101,63 @@ def draw_and_encode_segment(
                     elif direction == "cross_to_left":
                         cv2.arrowedLine(overlay, p2_s, p1_s, (0, 0, 255), line_thickness, tipLength=tip_length)
                     else:
-                        cv2.arrowedLine(overlay, p1_s, p2_s, (0, 0, 255), line_thickness, tipLength=tip_length)
-                        cv2.arrowedLine(overlay, p2_s, p1_s, (0, 0, 255), line_thickness, tipLength=tip_length)
-            frame = cv2.addWeighted(overlay, 0.2, frame, 0.8, 0)
-
-            current_frame_track_ids = {t['track_id'] for t in frame_data.get('tracks', [])}
-            if current_frame_index in event_frames_indices:
-                for track in frame_data.get('tracks', []):
-                    if track.get('has_crossed_tripwire'):
-                        active_alert_ids.add(track['track_id'])
-            active_alert_ids.intersection_update(current_frame_track_ids)
+                        cv2.line(overlay, p1_s, p2_s, (0, 0, 255), line_thickness)
 
             for track in frame_data.get('tracks', []):
+                track_id = track['track_id']
                 box = track['box_xyxy']
                 x1, y1, x2, y2 = map(int, [box[0] * scale_x, box[1] * scale_y, box[2] * scale_x, box[3] * scale_y])
-                track_id = track['track_id']
 
                 box_color = (128, 128, 128)
+                alpha = 0.5
                 if current_frame_index in event_frames_indices:
-                    box_color = (0, 255, 0)
-                    if track.get('is_in_roi', False): box_color = (0, 255, 255)
-                    if track_id in active_alert_ids: box_color = (0, 0, 255)
+                    box_color = (128, 128, 128)
+                    alpha = 0.8
+                    if track.get('is_in_roi'):
+                        box_color = (0, 255, 255)
+                        alpha = 1.0
+                    if track_id in active_alert_ids:
+                        box_color = (0, 0, 255)
+                        alpha = 1.0
 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-                cv2.putText(frame, f"ID:{track_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
+                track_overlay = overlay.copy()
+                cv2.rectangle(track_overlay, (x1, y1), (x2, y2), box_color, 2)
+                anchor_coords = track.get('anchors', [])
+                for anchor in anchor_coords:
+                    center_point = (int(anchor[0] * scale_x), int(anchor[1] * scale_y))
+                    cv2.circle(track_overlay, center_point, 5, box_color, -1)
+                overlay = cv2.addWeighted(track_overlay, alpha, overlay, 1 - alpha, 0)
+                cv2.putText(overlay, f'ID:{track_id}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, box_color, 2)
 
-            # --- 核心修改：最終修正的文字顯示條件 ---
-            text_position, font, scale, color, thick = (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2
+            frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
 
-            # 只要當前幀不在事件核心幀的集合內，就認為是緩衝區
-            if current_frame_index not in event_frames_indices:
-                if current_frame_index < start_frame:
-                    time_left = (start_frame - current_frame_index) / source_fps
-                    if time_left >= 0: cv2.putText(frame, f"Pre-Event Buffer: {time_left:.1f}s", text_position, font,
-                                                   scale, color, thick, cv2.LINE_AA)
-                elif current_frame_index > end_frame:
-                    time_left = post_event_sec - (current_frame_index - end_frame) / source_fps
-                    if time_left >= 0: cv2.putText(frame, f"Post-Event Buffer: {time_left:.1f}s", text_position, font,
-                                                   scale, color, thick, cv2.LINE_AA)
+            info_panel = np.zeros((80, source_width, 3), dtype=np.uint8)
+            frame[0:80, 0:source_width] = cv2.addWeighted(frame[0:80, 0:source_width], 0.5, info_panel, 0.5, 0)
+            event_text = f"EVENT: {event_type.upper()}"
+            cv2.putText(frame, event_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            if current_frame_index >= event_start_frame_index:
+                elapsed_time = (current_frame_index - event_start_frame_index) / source_fps
+                duration_text = f"DURATION: {elapsed_time:.1f}s"
+                cv2.putText(frame, duration_text, (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
             if process.stdin: process.stdin.write(frame.tobytes())
 
-    except (BrokenPipeError, IOError):
-        logging.warning("[FFmpeg] 管道提前關閉。")
-    finally:
-        cap.release()
-        if process.stdin: process.stdin.close()
+        if process.stdin:
+            process.stdin.close()
+        return_code = process.wait()
 
-    stderr_output_bytes, _ = process.communicate()
-    if process.returncode != 0:
-        stderr_output = stderr_output_bytes.decode('utf-8', errors='ignore')
-        logging.error(f"[FFmpeg] 編碼失敗 (返回碼: {process.returncode}):\n{stderr_output}")
+        if return_code != 0:
+            logging.error(f"[FFmpeg] 編碼失敗 (返回碼: {return_code})")
+            return False
+
+        logging.info(f"事件影片已成功儲存: {output_path}")
+        return True
+
+    except (BrokenPipeError, IOError) as e:
+        logging.warning(f"[FFmpeg] 管道寫入時發生錯誤: {e}")
         return False
 
-    logging.info(f"事件影片已成功儲存: {os.path.basename(output_path)}")
-    return True
+    finally:
+        cap.release()
+        if process.poll() is None:
+            process.kill()
