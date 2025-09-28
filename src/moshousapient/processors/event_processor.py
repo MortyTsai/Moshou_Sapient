@@ -37,27 +37,58 @@ class EventProcessor(BaseProcessor):
         self.tripwire_alert_ids = set()
 
     def _target_func(self):
-        # ... (此方法無變化) ...
         logging.info(f"[{self.name}] 處理器已啟動。")
         while not self.stop_event.is_set():
             try:
+                if self.stop_event.is_set() and self.frame_queue.empty():
+                    break
+
                 item = self.frame_queue.get(timeout=1)
                 current_time = item['time']
+
                 with self.state_lock:
                     current_tracks = self.shared_state.get('tracked_objects', [])
                     person_detected_now = self.shared_state.get('person_detected', False)
                     track_roi_status_now = self.shared_state.get('track_roi_status', {})
                     reid_features_to_add = self.shared_state.get('reid_features_map', {})
+                    if reid_features_to_add:
+                        self.shared_state['reid_features_map'] = {}
 
                 self._handle_tripwire_logic(current_tracks)
                 self._handle_dwell_logic(track_roi_status_now, current_time)
                 alert_ids_snapshot = self.tripwire_alert_ids.copy()
+
+                tracks_with_anchors = []
+                for track in current_tracks:
+                    bbox = track[:4]
+                    anchor_strategy = Config.ANCHOR_POINTS
+
+                    # 檢查是否有特定規則的錨點覆寫 (此處為未來擴展預留)
+                    # 例如，可以從 Config.ROI_SETTINGS 或 Config.TRIPWIRE_SETTINGS 中獲取
+
+                    anchors = calculate_anchor_points(bbox, anchor_strategy)
+
+                    anchor_coords = []
+                    for anchor in anchors:
+                        if isinstance(anchor, Point):
+                            anchor_coords.append(list(anchor.coords)[0])
+
+                    track_info = {
+                        'box_xyxy': bbox.tolist(),
+                        'track_id': int(track[4]),
+                        'confidence': track[5] if len(track) > 5 else None,
+                        'anchors': anchor_coords
+                    }
+                    tracks_with_anchors.append(track_info)
+
                 frame_data = {
-                    'frame': item['frame'], 'time': current_time,
-                    'tracks': current_tracks,
+                    'frame': item['frame'],
+                    'time': current_time,
+                    'tracks': tracks_with_anchors,
                     'track_roi_status': track_roi_status_now,
                     'tripwire_alert_ids': alert_ids_snapshot
                 }
+
                 if self.is_capturing_event:
                     self.event_recording_frames.append(frame_data)
                     if reid_features_to_add:
@@ -69,29 +100,32 @@ class EventProcessor(BaseProcessor):
                     self.last_person_seen_time = current_time
 
                 if not self.is_capturing_event:
-                    is_in_cooldown = current_time - self.last_event_end_time <= Config.COOLDOWN_PERIOD
+                    is_in_cooldown = (current_time - self.last_event_end_time) <= Config.COOLDOWN_PERIOD
                     if person_detected_now and not is_in_cooldown:
                         self._start_event(current_time)
                 else:
-                    post_event_elapsed = current_time - self.last_person_seen_time > Config.POST_EVENT_SECONDS
-                    max_duration_reached = current_time - self.event_start_time > Config.MAX_EVENT_DURATION
+                    post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
+                    max_duration_reached = (current_time - self.event_start_time) > Config.MAX_EVENT_DURATION
+
                     if not person_detected_now and post_event_elapsed:
                         self._end_event(current_time, "人物消失")
                     elif max_duration_reached:
                         self._end_event(current_time, "超過最大錄影時長", is_segment=True)
 
             except Empty:
-                if self.is_capturing_event: self._end_event(time.time(), "影像佇列為空")
+                if self.is_capturing_event:
+                    self._end_event(time.time(), "影像佇列為空")
                 continue
             except Exception as e:
                 logging.error(f"[{self.name}] 執行緒發生未預期的錯誤: {e}", exc_info=True)
                 time.sleep(1)
+
         if self.is_capturing_event and self.event_recording_frames:
             self._end_event(time.time(), "系統關閉")
+
         logging.info(f"[{self.name}] 處理器已停止。")
 
     def _start_event(self, current_time):
-        # ... (此方法無變化) ...
         self.is_capturing_event = True
         self.event_start_time = current_time
         self.current_event_type = "person_detected"
@@ -100,7 +134,6 @@ class EventProcessor(BaseProcessor):
         logging.info(f">>> [事件] 偵測到 '{self.current_event_type}' 事件! 開始錄製...")
 
     def _end_event(self, current_time, reason: str, is_segment: bool = False):
-        # ... (此方法無變化) ...
         logging.info(f"[事件] 事件結束 ({reason})。")
         event_metadata = {
             "start_time": self.event_start_time,
@@ -129,7 +162,6 @@ class EventProcessor(BaseProcessor):
 
     @staticmethod
     def _start_isolated_video_processor(event_metadata: dict, frames_data: list):
-        # ... (此方法無變化) ...
         logging.info(f"正在為事件 '{event_metadata['event_type']}' 啟動獨立的影片處理服務...")
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl', dir=str(Config.CAPTURES_DIR),
@@ -154,7 +186,6 @@ class EventProcessor(BaseProcessor):
             logging.error(f"啟動獨立影片處理服務失敗: {e}", exc_info=True)
 
     def _set_event_type(self, new_type: str):
-        # ... (此方法無變化) ...
         priority_map = {"tripwire_alert": 2, "dwell_alert": 1, "person_detected": 0}
         current_priority = priority_map.get(self.current_event_type, -1)
         new_priority = priority_map.get(new_type, -1)
@@ -164,7 +195,6 @@ class EventProcessor(BaseProcessor):
             self.current_event_type = new_type
 
     def _handle_tripwire_logic(self, current_tracks):
-        # ... (此方法無變化) ...
         if not Config.TRIPWIRES_ENABLED: return
         for track in current_tracks:
             track_id = int(track[4])
@@ -218,7 +248,6 @@ class EventProcessor(BaseProcessor):
             else:
                 if track_id in self.dwell_time_trackers: del self.dwell_time_trackers[track_id]
 
-        # 修正：移除未使用的變數
         disappeared_ids = set(self.dwell_time_trackers.keys()) - current_tracked_ids
         for track_id in disappeared_ids:
             del self.dwell_time_trackers[track_id]
