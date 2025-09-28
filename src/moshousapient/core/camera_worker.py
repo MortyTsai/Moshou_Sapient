@@ -1,10 +1,9 @@
-# src/moshousapient/core/camera_worker.py
+# src/moshousapient/core/camera_worker.py (Definitive Final Version)
 import logging
+import threading
 import yaml
 from queue import Queue
 from types import SimpleNamespace
-import threading
-
 from ultralytics import YOLO
 from ..streams.video_streamer import VideoStreamer
 from ..processors.inference_processor import InferenceProcessor
@@ -17,43 +16,50 @@ class CameraWorker:
         self.config = camera_config
         self.name = self.config.get("name", "Camera-Default")
         self.notifier = notifier
-        self.active_recorders = []
+
         self.shared_state = {'person_detected': False, 'tracked_objects': []}
         self.shared_state_lock = threading.Lock()
 
-        self.inference_queue = Queue(maxsize=2)
+        self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
 
-        buffer_size = int(Config.TARGET_FPS * (Config.PRE_EVENT_SECONDS + Config.POST_EVENT_SECONDS) * 2.0)
+        self.inference_queue = Queue(maxsize=2)
+        buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * Config.TARGET_FPS)
         self.event_queue = Queue(maxsize=buffer_size)
 
-        self.video_streamer = VideoStreamer(
-            src=self.config['rtsp_url'],
-            width=Config.ENCODE_WIDTH,
-            height=Config.ENCODE_HEIGHT,
-            use_udp=(self.config.get("transport_protocol", "udp").lower() == 'udp')
-        )
+        self.processors = [
+            InferenceProcessor(self.inference_queue, self.shared_state, self.shared_state_lock, model, reid_model,
+                               self._initialize_tracker, f"{self.name}-Inference"),
+            EventProcessor(
+                frame_queue=self.event_queue,
+                shared_state=self.shared_state,
+                state_lock=self.shared_state_lock,
+                notifier=self.notifier,
+                target_fps=Config.TARGET_FPS,
+                name=f"{self.name}-Event"
+            )
+        ]
 
-        self.inference_processor = InferenceProcessor(
-            frame_queue=self.inference_queue,
-            shared_state=self.shared_state,
-            state_lock=self.shared_state_lock,
-            model=model,
-            reid_model=reid_model,
-            tracker_factory=self._initialize_tracker,
-            name=f"{self.name}-Inference"
-        )
+    def start(self):
+        logging.info(f"[{self.name}] 正在啟動...")
+        try:
+            self.video_streamer.start(self.event_queue, self.inference_queue)
+            for processor in self.processors:
+                processor.start()
+            logging.info(f"[{self.name}] 所有處理執行緒已成功啟動。")
+        except Exception as e:
+            logging.error(f"[{self.name}] 啟動時發生錯誤: {e}", exc_info=True)
+            self.stop()
 
-        self.event_processor = EventProcessor(
-            frame_queue=self.event_queue,
-            shared_state=self.shared_state,
-            state_lock=self.shared_state_lock,
-            notifier=self.notifier,
-            active_recorders=self.active_recorders,
-            video_fps_mode=Config.VIDEO_FPS_MODE,
-            target_fps=Config.TARGET_FPS,
-            name=f"{self.name}-Event"
-        )
-        self.processors = [self.inference_processor, self.event_processor]
+    def stop(self):
+        logging.info(f"[{self.name}] 正在關閉...")
+        for processor in self.processors:
+            processor.stop()
+        if self.video_streamer:
+            self.video_streamer.stop()
+        logging.info(f"[{self.name}] 已安全關閉。")
+
+    def is_alive(self) -> bool:
+        return self.video_streamer and self.video_streamer.is_alive()
 
     def _initialize_tracker(self):
         try:
@@ -61,29 +67,7 @@ class CameraWorker:
                 cfg_dict = yaml.safe_load(f)
             tracker_args = SimpleNamespace(**cfg_dict)
             from ultralytics.trackers import BOTSORT
-            logging.info(f"[{self.name}] 已成功解析追蹤器設定檔: {Config.TRACKER_CONFIG_PATH}")
             return BOTSORT(args=tracker_args)
         except Exception as e:
-            logging.error(f"[{self.name}] 解析追蹤器設定檔或建立追蹤器時發生錯誤: {e}", exc_info=True)
+            logging.error(f"[{self.name}] 解析追蹤器設定檔時發生錯誤: {e}", exc_info=True)
             return None
-
-    def start(self):
-        logging.info(f"[{self.name}] 正在啟動...")
-        for processor in self.processors:
-            processor.start()
-        self.video_streamer.start(self.event_queue, self.inference_queue)
-
-    def stop(self):
-        logging.info(f"[{self.name}] 正在關閉...")
-        if self.video_streamer:
-            self.video_streamer.stop()
-        for processor in self.processors:
-            processor.stop()
-        if self.active_recorders:
-            running_recorders = [r for r in self.active_recorders if r.is_alive()]
-            if running_recorders:
-                logging.info(f"[{self.name}] {len(running_recorders)} 個事件錄影執行緒正在背景處理中...")
-        logging.info(f"[{self.name}] 已安全關閉。")
-
-    def is_alive(self) -> bool:
-        return self.video_streamer and self.video_streamer.is_alive()
