@@ -69,11 +69,11 @@ class Settings(BaseSettings):
     # --- 事件錄影參數 ---
     # 事件觸發「前」額外錄製的秒數。
     # 這能確保錄影內容包含事件發生前的完整上下文。
-    PRE_EVENT_SECONDS: float = 2.0
+    PRE_EVENT_SECONDS: float = 1.0
 
     # 當畫面中已無人物時，系統會再持續錄影的秒數。
     # 這能確保錄影內容包含人物離開後的完整畫面。
-    POST_EVENT_SECONDS: float = 5.0
+    POST_EVENT_SECONDS: float = 3.0
 
     # 一次事件錄影結束後，必須等待的冷卻時間（秒），才能觸發下一次新的事件。
     # 這能有效防止因人物短暫停留或重複進出而產生大量零碎的錄影檔案。
