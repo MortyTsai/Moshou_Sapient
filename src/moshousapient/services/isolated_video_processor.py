@@ -72,7 +72,7 @@ def process_video_event(input_data_path: str, output_path: str, event_type: str)
             cv2.polylines(overlay, [roi_points], isClosed=True, color=(255, 255, 0), thickness=2)
 
         if Config.TRIPWIRES_ENABLED and Config.TRIPWIRE_LINE_OBJECTS:
-            line_thickness, tip_length = 4, 0.05
+            line_thickness, tip_length = 8, 0.02
             for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
                 line = tripwire_obj["line"]
                 direction = tripwire_obj["direction"]
