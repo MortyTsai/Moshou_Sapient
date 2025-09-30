@@ -107,8 +107,7 @@ MoshouSapient/                                  # 專案根目錄
         │   ├── database_service.py             # 負責所有資料庫互動 (事件儲存, Re-ID)
         │   ├── discord_notifier.py             # Discord Bot 通知服務
         │   ├── isolated_inference_service.py   # (FILE) 獨立的 AI 推論子程序
-        │   ├── isolated_video_processor.py     # (RTSP) 獨立的影片繪圖與編碼子程序
-        │   └── video_recorder.py               # (舊版, 待廢棄)
+        │   └── isolated_video_processor.py     # (RTSP) 獨立的影片繪圖與編碼子程序
         │
         ├── streams/                            # 資料來源讀取模組
         │   ├── __init__.py
