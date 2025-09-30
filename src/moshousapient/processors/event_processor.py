@@ -255,8 +255,8 @@ class EventProcessor(BaseProcessor):
                             side_after = get_point_side_of_line(current_anchor, Point(p1), Point(p2))
 
                             if side_before != 0 and side_after != 0 and side_before != side_after:
-                                crossed_to_right = side_before == -1 and side_after == 1
-                                crossed_to_left = side_before == 1 and side_after == -1
+                                crossed_to_right = side_before == 1 and side_after == -1
+                                crossed_to_left = side_before == -1 and side_after == 1
                                 should_alert = (alert_direction == "both" or
                                                 (alert_direction == "cross_to_right" and crossed_to_right) or
                                                 (alert_direction == "cross_to_left" and crossed_to_left))
