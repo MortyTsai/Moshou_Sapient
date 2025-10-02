@@ -34,6 +34,8 @@ class Config:
     TARGET_BITRATE_MBPS = settings.TARGET_BITRATE_MBPS
     THREAD_JOIN_TIMEOUT = settings.THREAD_JOIN_TIMEOUT
     HEALTH_CHECK_INTERVAL = settings.HEALTH_CHECK_INTERVAL
+    TRIPWIRE_LINE_THICKNESS = settings.TRIPWIRE_LINE_THICKNESS
+    TRIPWIRE_TIP_LENGTH = settings.TRIPWIRE_TIP_LENGTH
 
     # --- 路徑設定 ---
     CAPTURES_DIR = settings.CAPTURES_DIR
@@ -139,23 +141,23 @@ class Config:
 
         lines = Config.TRIPWIRE_SETTINGS.get('lines', [])
         if lines:
-            for config in lines:
+            for line_config in lines:
                 try:
-                    points = config.get("points")
+                    points = line_config.get("points")
                     if not points or len(points) != 2:
-                        logging.warning(f"[系統] 警戒線定義無效 (需要 2 個點)，已跳過: {config}")
+                        logging.warning(f"[系統] 警戒線定義無效 (需要 2 個點)，已跳過: {line_config}")
                         continue
 
                     line = LineString(points)
-                    direction = config.get("alert_direction", "both")
+                    direction = line_config.get("alert_direction", "both")
                     # 儲存解析後的物件和原始設定
                     Config.TRIPWIRE_LINE_OBJECTS.append({
                         "line": line,
                         "direction": direction,
-                        "config": config  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
+                        "config": line_config  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
                     })
                 except (ShapelyError, TypeError, KeyError) as e:
-                    logging.warning(f"[系統] 無法建立警戒線，設定可能無效: {e}。已跳過該設定: {config}")
+                    logging.warning(f"[系統] 無法建立警戒線，設定可能無效: {e}。已跳過該設定: {line_config}")
 
             if Config.TRIPWIRE_LINE_OBJECTS:
                 logging.info(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
