@@ -1,5 +1,4 @@
 # src/moshousapient/core/main.py
-
 import logging
 import threading
 import sys
@@ -11,7 +10,7 @@ from ..config import Config
 from ..logging_setup import setup_logging
 from ..database import init_db
 from ..web.app import create_flask_app
-from .camera_worker import CameraWorker
+from .rtsp_pipeline import RTSPPipeline
 from ..services.discord_notifier import DiscordNotifier
 from .runners import RTSPRunner, FileRunner, BaseRunner
 from ..utils.video_utils import get_video_resolution
@@ -19,6 +18,7 @@ from ..settings import PROJECT_ROOT
 
 
 def pre_flight_checks() -> bool:
+    """執行應用程式啟動前的基本環境和設定檢查。"""
     logging.info("[系統] 執行啟動前環境檢查...")
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not torch.cuda.is_available():
@@ -37,6 +37,7 @@ def pre_flight_checks() -> bool:
 
 
 def get_camera_config() -> Optional[Dict[str, Any]]:
+    """根據全域設定產生單個攝影機的設定字典。"""
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not Config.RTSP_URL:
             logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
@@ -51,7 +52,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         else:
             transport_protocol = protocol_setting
         return {
-            "name": f"Worker-{source_name}",
+            "name": f"Pipeline-{source_name}",
             "rtsp_url": source_uri,
             "transport_protocol": transport_protocol
         }
@@ -59,6 +60,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
 
 
 def main():
+    """應用程式主入口點。"""
     # 1. 基礎初始化
     setup_logging()
     Config.initialize_static_settings()
@@ -121,20 +123,25 @@ def main():
             warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
             model.predict(warmup_frame, device=0, verbose=False)
             logging.info("[YOLO] TensorRT 模型已成功載入並預熱。")
+
             logging.info(f"[Re-ID] 正在載入 {Config.REID_MODEL_PATH} 作為特徵提取器...")
             reid_model = YOLO(Config.REID_MODEL_PATH)
-            reid_model.predict(warmup_frame, device=0, verbose=False)
+            reid_model.embed(warmup_frame, device=0, verbose=False)
             logging.info("[Re-ID] Re-ID 模型已成功載入並預熱。")
+
             camera_config = get_camera_config()
             if not camera_config:
                 if notifier: notifier.stop()
                 sys.exit(1)
-            workers = [CameraWorker(camera_config, model, reid_model, notifier)]
-            runner = RTSPRunner(workers, notifier)
+
+            pipelines = [RTSPPipeline(camera_config, model, reid_model, notifier)]
+            runner = RTSPRunner(pipelines, notifier)
+
         except Exception as e:
             logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
             if notifier: notifier.stop()
             sys.exit(1)
+
     elif Config.VIDEO_SOURCE_TYPE == "FILE":
         runner = FileRunner(workers=[], notifier=notifier)
     else:
@@ -155,8 +162,9 @@ def main():
             runner.shutdown()
     else:
         logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
-        if notifier:
-            notifier.stop()
+
+    if notifier:
+        notifier.stop()
 
 
 if __name__ == '__main__':
