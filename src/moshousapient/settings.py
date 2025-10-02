@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 class Settings(BaseSettings):
     """
     應用程式的核心設定類別。
+    設定會優先從專案根目錄下的 .env 檔案讀取，若 .env 檔案中未定義，則會使用此處指定的預設值。
     """
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
 
     # 【FILE 模式專用】影片檔案的路徑。
     # 當 VIDEO_SOURCE_TYPE 設定為 "FILE" 時，系統將會讀取此路徑的影片。
-    # 範例: "videos/my_test_video.mp4"
+    # 範例: "data/video_samples/input.mp4"
     VIDEO_FILE_PATH: Optional[str] = "data/video_samples/your_test_video.mp4"
 
     # 【RTSP 模式專用】攝影機的 RTSP 串流網址。
@@ -81,13 +82,13 @@ class Settings(BaseSettings):
 
     # 單一事件錄影的最長持續時間（秒）。
     # 這是一個安全機制，防止因意外情況導致錄影程序無法正常結束，從而產生過大的影片檔案。
-    MAX_EVENT_DURATION: float = 20.0
+    MAX_EVENT_DURATION: float = 60.0
 
-    # --- 事件影片幀率設定 - --
+    # --- 事件影片幀率設定 ---
     # 輸出影片的幀率模式。可選值: "TARGET", "SOURCE"
-    # "TARGET": 系統會將影片降採樣至下方設定的 TARGET_FPS，有助於節省儲存空間。 (推薦)
+    # "TARGET": 系統會將影片降採樣至下方設定的 TARGET_FPS，有助於節省儲存空間。
     # "SOURCE": 系統會保留影片的原始幀率。
-    VIDEO_FPS_MODE: str = "TARGET"
+    VIDEO_FPS_MODE: str = "SOURCE"
 
     # 在 VIDEO_FPS_MODE 設定為 "TARGET" 時，所使用的目標幀率 (FPS)。
     # 較高的 FPS 會使影片更流暢，但檔案大小也會更大。
@@ -95,8 +96,8 @@ class Settings(BaseSettings):
 
     # --- 事件影片編碼設定 ---
     # 輸出影片的編碼模式。可選值: "QUALITY", "BALANCED"
-    # "QUALITY":  恆定品質模式。優先保證每一幀的視覺品質，但檔案大小會因畫面複雜度而大幅波動。(預設)
-    # "BALANCED": 均衡模式。將影片的平均位元率控制在一個目標值附近，檔案大小更可預測，適合絕大多數場景。
+    # "QUALITY": 恆定品質模式。優先保證每一幀的視覺品質，但檔案大小會因畫面複雜度而大幅波動。
+    # "BALANCED": 均衡模式。將影片的平均位元率控制在一個目標值附近，檔案大小更可預測，適合絕大多數場景。(預設)
     VIDEO_ENCODING_MODE: str = "BALANCED"
 
     # 在編碼模式為 "BALANCED" 時，所使用的目標平均位元率 (單位：Mbps)。
@@ -116,6 +117,13 @@ class Settings(BaseSettings):
     # 進行 AI 分析時所使用的影像解析度（高度）。
     ANALYSIS_HEIGHT: int = 736
 
+    # --- 視覺化設定 ---
+    # 繪製在影片上的警戒線（Tripwire）的線條粗細（單位：像素）。
+    TRIPWIRE_LINE_THICKNESS: int = 6
+    # 控制方向性警戒線箭頭的長度。此值為相對於線段總長度的「比例」。
+    # 例如：0.03 代表箭頭長度為線段總長度的 3%。
+    TRIPWIRE_TIP_LENGTH: float = 0.03
+
     # --- 系統內部參數 (通常不需修改) ---
     THREAD_JOIN_TIMEOUT: int = 10
     HEALTH_CHECK_INTERVAL: int = 15
@@ -129,7 +137,6 @@ class Settings(BaseSettings):
     MODEL_PATH: Path = MODELS_DIR / "yolo11s.engine"
     REID_MODEL_PATH: Path = MODELS_DIR / "yolo11s-cls.pt"
     TRACKER_CONFIG_PATH: Path = CONFIGS_DIR / "custom_botsort.yaml"
-    # 新增：行為分析設定檔的路徑
     BEHAVIOR_CONFIG_PATH: Path = CONFIGS_DIR / "behavior_analysis.yaml"
 
 
