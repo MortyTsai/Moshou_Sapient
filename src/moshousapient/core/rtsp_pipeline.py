@@ -1,20 +1,27 @@
-# src/moshousapient/core/camera_worker.py (Definitive Final Version)
+# src/moshousapient/core/rtsp_pipeline.py
 import logging
 import threading
 import yaml
 from queue import Queue
 from types import SimpleNamespace
+
 from ultralytics import YOLO
+from ultralytics.trackers import BOTSORT
+
 from ..streams.video_streamer import VideoStreamer
 from ..processors.inference_processor import InferenceProcessor
 from ..processors.event_processor import EventProcessor
 from ..config import Config
 
 
-class CameraWorker:
+class RTSPPipeline:
+    """
+    代表一個完整的、自給自足的 RTSP 影像處理管線。
+    它負責協調影像流讀取、AI 推論和行為分析等一系列處理器。
+    """
     def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
         self.config = camera_config
-        self.name = self.config.get("name", "Camera-Default")
+        self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
 
         self.shared_state = {'person_detected': False, 'tracked_objects': []}
@@ -27,8 +34,15 @@ class CameraWorker:
         self.event_queue = Queue(maxsize=buffer_size)
 
         self.processors = [
-            InferenceProcessor(self.inference_queue, self.shared_state, self.shared_state_lock, model, reid_model,
-                               self._initialize_tracker, f"{self.name}-Inference"),
+            InferenceProcessor(
+                frame_queue=self.inference_queue,
+                shared_state=self.shared_state,
+                state_lock=self.shared_state_lock,
+                model=model,
+                reid_model=reid_model,
+                tracker_factory=self._initialize_tracker,
+                name=f"{self.name}-Inference"
+            ),
             EventProcessor(
                 frame_queue=self.event_queue,
                 shared_state=self.shared_state,
@@ -40,6 +54,7 @@ class CameraWorker:
         ]
 
     def start(self):
+        """啟動管線中的所有處理執行緒。"""
         logging.info(f"[{self.name}] 正在啟動...")
         try:
             self.video_streamer.start(self.event_queue, self.inference_queue)
@@ -51,6 +66,7 @@ class CameraWorker:
             self.stop()
 
     def stop(self):
+        """安全地停止管線中的所有處理執行緒。"""
         logging.info(f"[{self.name}] 正在關閉...")
         for processor in self.processors:
             processor.stop()
@@ -59,14 +75,15 @@ class CameraWorker:
         logging.info(f"[{self.name}] 已安全關閉。")
 
     def is_alive(self) -> bool:
+        """檢查管線的核心影像流是否仍在運行。"""
         return self.video_streamer and self.video_streamer.is_alive()
 
     def _initialize_tracker(self):
+        """根據設定檔初始化追蹤器物件。"""
         try:
             with open(Config.TRACKER_CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg_dict = yaml.safe_load(f)
             tracker_args = SimpleNamespace(**cfg_dict)
-            from ultralytics.trackers import BOTSORT
             return BOTSORT(args=tracker_args)
         except Exception as e:
             logging.error(f"[{self.name}] 解析追蹤器設定檔時發生錯誤: {e}", exc_info=True)
