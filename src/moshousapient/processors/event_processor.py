@@ -1,3 +1,4 @@
+# src/moshousapient/processors/event_processor.py
 import logging
 import pickle
 import subprocess
@@ -8,13 +9,15 @@ from collections import deque
 from datetime import datetime
 from queue import Empty, Queue
 from threading import Lock
-from typing import Union
+from typing import Union, Dict, cast, Tuple
 
-from shapely.geometry import Point, LineString, Polygon
+import numpy as np
+from shapely.geometry import Point
 
 from .base_processor import BaseProcessor
 from ..config import Config
-from ..utils.geometry_utils import calculate_anchor_points, get_point_side_of_line
+from ..utils.geometry_utils import calculate_anchor_points
+from ..utils.behavior_utils import analyze_roi_status, analyze_tripwire_crossings
 
 behavior_logger = logging.getLogger("BehaviorAnalysis")
 
@@ -34,6 +37,7 @@ class EventProcessor(BaseProcessor):
         self.notifier = notifier
         self.target_fps = target_fps
 
+        # 事件狀態管理
         buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * target_fps)
         self.frame_buffer = deque(maxlen=buffer_size)
         self.is_capturing_event = False
@@ -43,46 +47,21 @@ class EventProcessor(BaseProcessor):
         self.current_event_type: Union[str, None] = "person_detected"
         self.event_recording_frames = []
 
+        # 行為分析狀態管理
         self.dwell_time_trackers = {}
         self.track_last_positions = {}
         self.tripwire_alert_ids = set()
 
-    def _calculate_roi_status(self, tracks) -> dict:
-        """
-        根據設定檔中定義的錨點策略，計算每個追蹤目標是否在 ROI 區域內。
-        此函式會優先使用 ROI 規則中定義的 'anchor_points'。
-        """
-        if not Config.ROI_ENABLED or not Config.ROI_POLYGON_OBJECT:
-            return {}
-
-        anchor_strategy = Config.ROI_SETTINGS.get('anchor_points', Config.ANCHOR_POINTS)
-        roi_polygon = Config.ROI_POLYGON_OBJECT
-        track_roi_status = {}
-
-        for track in tracks:
-            track_id = int(track[4])
-            bbox = track[:4]
-            is_in_roi = False
-
-            anchors = calculate_anchor_points(bbox, anchor_strategy)
-
-            for anchor in anchors:
-                if isinstance(anchor, Point):
-                    if roi_polygon.contains(anchor):
-                        is_in_roi = True
-                        break
-                elif isinstance(anchor, Polygon):
-                    if roi_polygon.intersects(anchor):
-                        is_in_roi = True
-                        break
-
-            track_roi_status[track_id] = is_in_roi
-
-        return track_roi_status
+        # 幀率控制狀態
+        self.last_processed_time = 0.0
+        self.time_accumulator = 0.0
+        self.min_frame_interval = 1.0 / self.target_fps if Config.VIDEO_FPS_MODE == "TARGET" and self.target_fps > 0 else 0
 
     def _target_func(self):
         """主處理迴圈，持續從佇列中獲取幀並進行行為分析。"""
         logging.info(f"[{self.name}] 處理器已啟動。")
+        self.last_processed_time = time.time()  # 初始化時間戳
+
         while not self.stop_event.is_set():
             try:
                 if self.stop_event.is_set() and self.frame_queue.empty():
@@ -91,32 +70,87 @@ class EventProcessor(BaseProcessor):
                 item = self.frame_queue.get(timeout=1)
                 current_time = item['time']
 
+                # 使用累加器演算法進行精確的幀率控制
+                if self.min_frame_interval > 0:
+                    delta_time = current_time - self.last_processed_time
+                    self.last_processed_time = current_time
+                    self.time_accumulator += delta_time
+
+                    if self.time_accumulator < self.min_frame_interval:
+                        continue  # 時間配額不足，跳過此幀
+
+                    # 消耗一個時間配額
+                    self.time_accumulator -= self.min_frame_interval
+
                 with self.state_lock:
-                    current_tracks = self.shared_state.get('tracked_objects', [])
                     person_detected_now = self.shared_state.get('person_detected', False)
+                    current_tracks_obj = self.shared_state.get('tracked_objects', [])
 
-                track_roi_status_now = self._calculate_roi_status(current_tracks)
+                current_tracks = np.array(current_tracks_obj)
+                if current_tracks.size == 0:
+                    current_tracks = np.empty((0, 8))
 
-                self._handle_tripwire_logic(current_tracks)
+                # --- 行為分析 ---
+                track_roi_status_now = analyze_roi_status(
+                    tracks=current_tracks,
+                    roi_enabled=Config.ROI_ENABLED,
+                    roi_polygon=Config.ROI_POLYGON_OBJECT,
+                    roi_settings=Config.ROI_SETTINGS,
+                    global_anchor_points=Config.ANCHOR_POINTS
+                )
+
+                crossed_ids_map, self.track_last_positions = analyze_tripwire_crossings(
+                    tracks=current_tracks,
+                    track_last_positions=self.track_last_positions,
+                    tripwires_enabled=Config.TRIPWIRES_ENABLED,
+                    tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
+                    global_anchor_points=Config.ANCHOR_POINTS
+                )
+
+                if crossed_ids_map:
+                    newly_crossed_ids = set(crossed_ids_map.keys()) - self.tripwire_alert_ids
+                    if newly_crossed_ids:
+                        self._set_event_type("tripwire_alert")
+                        for track_id in newly_crossed_ids:
+                            self.tripwire_alert_ids.add(track_id)
+                            triggered_line_name = "未命名"
+                            for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
+                                if 'config' in tripwire_obj and 'name' in tripwire_obj['config']:
+                                    triggered_line_name = tripwire_obj['config'].get('name', '未命名')
+                            behavior_logger.warning(
+                                f"--- [方向性警報] --- 目標 ID: {track_id} 觸發了警戒線: '{triggered_line_name}'")
+
                 self._handle_dwell_logic(track_roi_status_now, current_time)
-                alert_ids_snapshot = self.tripwire_alert_ids.copy()
 
+                # --- 準備視覺化資料 ---
+                alert_ids_snapshot = self.tripwire_alert_ids.copy()
                 tracks_with_anchors = []
                 for track in current_tracks:
+                    track_id = int(track[4])
                     bbox = track[:4]
-                    anchor_strategy = Config.ANCHOR_POINTS  # 視覺化錨點統一使用全域設定
-                    anchors = calculate_anchor_points(bbox, anchor_strategy)
+
+                    vis_anchor_strategy = Config.ANCHOR_POINTS
+                    if track_id in crossed_ids_map:
+                        for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
+                            vis_anchor_strategy = tripwire_obj["config"].get('anchor_points', Config.ANCHOR_POINTS)
+                            break
+                    elif track_roi_status_now.get(track_id, False):
+                        vis_anchor_strategy = Config.ROI_SETTINGS.get('anchor_points', Config.ANCHOR_POINTS)
+
+                    bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
+                    anchors = calculate_anchor_points(bbox_tuple, vis_anchor_strategy)
                     anchor_coords = [list(anchor.coords)[0] for anchor in anchors if isinstance(anchor, Point)]
 
-                    track_info = {
-                        'box_xyxy': bbox.tolist(), 'track_id': int(track[4]),
+                    tracks_with_anchors.append({
+                        'box_xyxy': bbox.tolist(),
+                        'track_id': track_id,
                         'confidence': track[5] if len(track) > 5 else None,
                         'anchors': anchor_coords
-                    }
-                    tracks_with_anchors.append(track_info)
+                    })
 
                 frame_data = {
-                    'frame': item['frame'], 'time': current_time,
+                    'frame': item['frame'],
+                    'time': current_time,
                     'tracks': tracks_with_anchors,
                     'track_roi_status': track_roi_status_now,
                     'tripwire_alert_ids': alert_ids_snapshot
@@ -154,7 +188,6 @@ class EventProcessor(BaseProcessor):
 
         if person_detected_now:
             self.last_person_seen_time = current_time
-
             is_in_cooldown = (current_time - self.last_event_end_time) <= Config.COOLDOWN_PERIOD
             if not self.is_capturing_event and not is_in_cooldown:
                 self._start_event(current_time)
@@ -171,7 +204,8 @@ class EventProcessor(BaseProcessor):
         """結束當前事件錄製或進行分段。"""
         logging.info(f"[事件] 事件結束 ({reason})。")
         event_metadata = {
-            "start_time": self.event_start_time, "end_time": current_time,
+            "start_time": self.event_start_time,
+            "end_time": current_time,
             "event_type": self.current_event_type
         }
         if self.event_recording_frames:
@@ -179,10 +213,11 @@ class EventProcessor(BaseProcessor):
 
         self.last_event_end_time = current_time
         if is_segment:
-            logging.info(">>> [事件] 進行事件分段, 準備錄製下一段...")
+            logging.info(">>> [事件] 進行事件分段，準備錄製下一段...")
             overlap_frames = int(Config.PRE_EVENT_SECONDS * self.target_fps)
             self.event_recording_frames = self.event_recording_frames[-overlap_frames:]
             self.event_start_time = current_time
+            self.current_event_type = "person_detected"
         else:
             self.is_capturing_event = False
             self.current_event_type = None
@@ -196,8 +231,7 @@ class EventProcessor(BaseProcessor):
         """啟動一個獨立的子程序來處理影片的繪製和編碼。"""
         logging.info(f"正在為事件 '{event_metadata['event_type']}' 啟動獨立的影片處理服務...")
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl',
-                                             dir=str(Config.CAPTURES_DIR),
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl', dir=str(Config.CAPTURES_DIR),
                                              mode='wb') as temp_f:
                 pickle.dump(frames_data, temp_f)  # type: ignore
                 temp_file_path = temp_f.name
@@ -227,53 +261,7 @@ class EventProcessor(BaseProcessor):
                 logging.info(f">>> [事件升級] '{self.current_event_type}' 事件已升級為 '{new_type}'")
             self.current_event_type = new_type
 
-    def _handle_tripwire_logic(self, current_tracks):
-        """處理所有與警戒線穿越相關的邏輯。"""
-        if not Config.TRIPWIRES_ENABLED:
-            return
-
-        for track in current_tracks:
-            track_id = int(track[4])
-            bbox = track[:4]
-            for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
-                tripwire_line, alert_direction, tripwire_config = \
-                    tripwire_obj["line"], tripwire_obj["direction"], tripwire_obj["config"]
-
-                anchor_strategy = tripwire_config.get('anchor_points', Config.ANCHOR_POINTS)
-                current_anchors = calculate_anchor_points(bbox, anchor_strategy)
-
-                for i, current_anchor in enumerate(current_anchors):
-                    if not isinstance(current_anchor, Point): continue
-                    anchor_key = (track_id, i)
-                    last_position = self.track_last_positions.get(anchor_key)
-
-                    if last_position and last_position != current_anchor:
-                        movement_line = LineString([last_position, current_anchor])
-                        if movement_line.intersects(tripwire_line):
-                            p1, p2 = tripwire_line.coords
-                            side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
-                            side_after = get_point_side_of_line(current_anchor, Point(p1), Point(p2))
-
-                            if side_before != 0 and side_after != 0 and side_before != side_after:
-                                crossed_to_right = side_before == 1 and side_after == -1
-                                crossed_to_left = side_before == -1 and side_after == 1
-                                should_alert = (alert_direction == "both" or
-                                                (alert_direction == "cross_to_right" and crossed_to_right) or
-                                                (alert_direction == "cross_to_left" and crossed_to_left))
-                                if should_alert:
-                                    if track_id not in self.tripwire_alert_ids:
-                                        behavior_logger.warning(
-                                            f"--- [方向性警報] --- 目標 ID: {track_id} 觸發了警戒線: "
-                                            f"{tripwire_config.get('name', '未命名')}")
-                                        self.tripwire_alert_ids.add(track_id)
-                                        self._set_event_type("tripwire_alert")
-                                    break
-                    self.track_last_positions[anchor_key] = current_anchor
-                else:
-                    continue
-                break
-
-    def _handle_dwell_logic(self, track_roi_status, current_time):
+    def _handle_dwell_logic(self, track_roi_status: Dict[int, bool], current_time: float):
         """處理所有與 ROI 區域停留相關的邏輯。"""
         if not Config.ROI_ENABLED:
             return
