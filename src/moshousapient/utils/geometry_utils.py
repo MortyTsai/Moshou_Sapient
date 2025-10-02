@@ -35,11 +35,6 @@ def calculate_anchor_points(bbox: Bbox, strategies: Union[str, List[str]]) -> Li
     :param strategies: 一個策略名稱或策略名稱列表。
     :return: 一個包含 Shapely Point 或 Polygon 物件的列表。
     """
-    # 最終的、健壯的有效性檢查：
-    # 1. 檢查 bbox 是否為 None。
-    # 2. 檢查 bbox 是否為一個 "Sized" 物件 (即支援 len() 函式)。
-    # 3. 檢查其長度是否為 4。
-    # 這個方法對元組、列表和 NumPy 陣列都安全有效，且無任何歧義。
     if bbox is None or not hasattr(bbox, '__len__') or len(bbox) != 4:
         return []
 
