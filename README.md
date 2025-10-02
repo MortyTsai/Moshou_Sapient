@@ -10,13 +10,13 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 
 :construction: **本專案為學習與實踐導向，仍在持續開發中。**
 
-目前已完成核心功能的開發，具備穩定的基礎架構與可靠的行為分析能力。系統架構已為未來的功能擴展 (如多攝影機管理) 預留了清晰的介面。歡迎任何形式的建議與討論。
+目前已完成核心功能的開發，具備穩定的基礎架構與可靠的行為分析能力。系統架構已為未來的功能擴展 (如多攝影機管理、微服務化) 預留了清晰的介面。歡迎任何形式的建議與討論。
 
 ## 核心特性
 
 -   **高效能推論與編碼管線 (High-Performance Inference & Encoding Pipeline)**:
     -   **AI 推論**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎進行加速，實現高速物件偵測與特徵提取。
-    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，特別引入了**記憶體幀池**架構，將整個影片一次性預讀取至記憶體，實現了 I/O 的完全並行化與絕對的畫面同步，將影片繪製與編碼的處理速度穩定在 **100 FPS** 以上。
+    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，特別引入了**記憶體幀池**架構，將整個影片一次性預讀取至記憶體，實現了 I/O 的完全並行化與絕對的畫面同步，極大地提升了影片繪製與編碼的處理效率。
 
 -   **工業級程序隔離架構 (Industrial-Grade Process Isolation)**:
     -   **FILE 模式 (檔案處理)**: 將資源密集型的 AI 推論任務完全封裝在一個獨立的作業系統子程序中執行。這種設計從根本上保證了主應用程式的穩定性和響應能力。
@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
     -   **幀率控制**: 可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片降採樣至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
     -   **編碼策略**: 提供「品質」(`QUALITY`) 模式與「均衡」(`BALANCED`) 模式，後者可將影片控制在指定的平均位元率，實現可預測的檔案大小。
 
--   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services` 等多個職責明確的子套件，實現了高度的內聚與解耦。
+-   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services`, `utils` 等多個職責明確的子套件，實現了高度的內聚與解耦。
 
 -   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
@@ -91,7 +91,7 @@ MoshouSapient/                                  # 專案根目錄
         │
         ├── core/                               # 核心業務邏輯與協調器
         │   ├── __init__.py
-        │   ├── camera_worker.py                # (RTSP) 管理單一攝影機完整處理管線的類別
+        │   ├── rtsp_pipeline.py                # (RTSP) 管理單一攝影機完整處理管線的類別
         │   ├── main.py                         # 應用程式主邏輯，負責初始化與啟動
         │   └── runners.py                      # 執行策略模組 (RTSPRunner / FileRunner)
         │
@@ -107,18 +107,19 @@ MoshouSapient/                                  # 專案根目錄
         │   ├── database_service.py             # 負責所有資料庫互動 (事件儲存, Re-ID)
         │   ├── discord_notifier.py             # Discord Bot 通知服務
         │   ├── isolated_inference_service.py   # (FILE) 獨立的 AI 推論子程序
-        │   ├── isolated_video_processor.py     # (RTSP) 獨立的影片繪圖與編碼子程序
-        │   └── video_recorder.py               # (舊版, 待廢棄)
+        │   └── isolated_video_processor.py     # (RTSP) 獨立的影片繪圖與編碼子程序
         │
         ├── streams/                            # 資料來源讀取模組
         │   ├── __init__.py
         │   └── video_streamer.py               # (RTSP) 使用 FFmpeg 從 RTSP 來源讀取影像串流
         │
-        ├── utils/                              # 通用工具函式子套件
+        ├── utils/                              # 通用、已解耦的工具函式子套件
         │   ├── __init__.py
-        │   ├── geometry_utils.py               # 通用幾何計算工具 (如向量叉積, 錨點計算)
-        │   ├── reid_utils.py                   # Re-ID 相關工具函式 (如餘弦相似度)
-        │   └── video_utils.py                  # (FILE) 影片處理工具 (解析度獲取, 視覺化繪製)
+        │   ├── behavior_utils.py               # 行為分析演算法 (ROI, Tripwire 判斷)
+        │   ├── geometry_utils.py               # 通用幾何計算工具 (錨點計算等)
+        │   ├── reid_utils.py                   # Re-ID 相關演算法 (餘弦相似度)
+        │   ├── video_utils.py                  # 通用影片 I/O 工具 (解析度獲取, 緩存讀取)
+        │   └── visualization_utils.py          # 視覺化繪圖工具 (繪製疊加層)
         │
         ├── web/                                # Web 儀表板子套件
         │   ├── __init__.py
@@ -213,12 +214,13 @@ MoshouSapient/                                  # 專案根目錄
 
 ## 發展藍圖
 
--   **[首要] 進階警報 (Advanced Alerts)**:
+-   **[首要] 架構演進 (Architecture Evolution)**:
+    -   **遷移至微服務/任務佇列架構**: 將當前的程序隔離模型，重構為基於訊息中間件 (如 RabbitMQ) 的微服務架構。此舉將徹底解耦各個功能單元（推論、行為分析、影片編碼），實現更強的穩定性、擴展性與可維護性，並為多攝影機管理奠定基礎。
+-   **進階警報 (Advanced Alerts)**:
     -   **遮蔽警報 (Occlusion Alert)**: 開發基於 AI 偵測的遮蔽警報，當單一可識別物件（如人）的邊界框佔據畫面過大比例時觸發，以防止鏡頭被惡意遮擋。
     -   **畫面異常警報 (Scene Anomaly Alert)**: 開發不依賴 AI 物件偵測的底層影像分析警報，例如畫面凍結、亮度劇變（全黑/全白）等，以增強系統對攝影機本身故障的感知能力。
 -   **白名單系統 (Whitelist System)**: 開發一套白名單機制。當事件觸發時，可將偵測到的人物特徵與預先註冊的白名單特徵庫進行比對，若匹配成功則抑制警報通知，以過濾授權人員的正常活動。
 -   **前端介面強化**: 擴充 Web 儀表板功能，例如增加事件篩選、排序，或引入更豐富的數據視覺化圖表，並提供 ROI/警戒線的視覺化設定介面。
--   **多攝影機協同**: 將現有的單攝影機架構擴展，使其能夠由一個主程序同時管理多個獨立的攝影機，並實現跨攝影機的目標追蹤。
 
 ## 開發模式說明
 
