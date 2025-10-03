@@ -1,24 +1,38 @@
 # src/moshousapient/core/main.py
-import logging
-import threading
-import sys
-import torch
-from typing import Optional, Dict, Any
-from pathlib import Path
+"""
+MoshouSapient 應用程式的主入口點。
+負責初始化所有組件、根據設定選擇執行策略，並管理應用程式的生命週期。
+"""
 
+# 1. 標準庫導入
+import logging
+import sys
+import threading
+from pathlib import Path
+from typing import Optional, Dict, Any
+
+# 2. 第三方庫導入
+import torch
+
+# 3. 本專案相對導入
 from ..config import Config
 from ..logging_setup import setup_logging
 from ..database import init_db
 from ..web.app import create_flask_app
-from .rtsp_pipeline import RTSPPipeline
+from ..settings import settings, PROJECT_ROOT
 from ..services.discord_notifier import DiscordNotifier
-from .runners import RTSPRunner, FileRunner, BaseRunner
 from ..utils.video_utils import get_video_resolution
-from ..settings import PROJECT_ROOT
+from .rtsp_pipeline import RTSPPipeline
+from .runners import RTSPRunner, FileRunner, BaseRunner
+from .management import WorkerManager
 
 
 def pre_flight_checks() -> bool:
-    """執行應用程式啟動前的基本環境和設定檢查。"""
+    """
+    執行應用程式啟動前的基本環境和設定檢查。
+
+    :return: 檢查通過返回 True，否則返回 False。
+    """
     logging.info("[系統] 執行啟動前環境檢查...")
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not torch.cuda.is_available():
@@ -37,7 +51,11 @@ def pre_flight_checks() -> bool:
 
 
 def get_camera_config() -> Optional[Dict[str, Any]]:
-    """根據全域設定產生單個攝影機的設定字典。"""
+    """
+    根據全域設定產生單個攝影機的設定字典。
+
+    :return: 包含攝影機設定的字典，如果設定無效則返回 None。
+    """
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         if not Config.RTSP_URL:
             logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
@@ -60,35 +78,18 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
 
 
 def main():
-    """應用程式主入口點。"""
-    # 1. 基礎初始化
+    """
+    應用程式主入口點。
+    """
+    # 1. 基礎初始化 (將日誌設定移至最頂部)
     setup_logging()
+
     Config.initialize_static_settings()
 
     if not pre_flight_checks():
         sys.exit(1)
 
     init_db()
-
-    if Config.VIDEO_SOURCE_TYPE == "FILE":
-        logging.info("[系統] 偵測到檔案模式，正在動態獲取影片解析度...")
-        video_path_str = Config.VIDEO_FILE_PATH
-        if not video_path_str:
-            logging.warning("[系統] 檔案模式已啟用，但未提供 VIDEO_FILE_PATH。")
-        else:
-            video_path = Path(video_path_str)
-            if not video_path.is_absolute():
-                video_path = PROJECT_ROOT / video_path
-
-            if video_path.exists():
-                resolution = get_video_resolution(str(video_path))
-                if resolution:
-                    Config.ENCODE_WIDTH, Config.ENCODE_HEIGHT = resolution
-                    logging.info(f"[系統] 已動態更新影像尺寸為: {resolution[0]}x{resolution[1]}")
-                else:
-                    logging.error("[系統] 無法獲取影片解析度，將使用預設值。")
-            else:
-                logging.warning(f"[系統] 未找到有效的影片檔案: {video_path}，將使用預設影像尺寸。")
 
     # 2. 初始化通知器 (所有模式共用)
     notifier = None
@@ -143,28 +144,49 @@ def main():
             sys.exit(1)
 
     elif Config.VIDEO_SOURCE_TYPE == "FILE":
+        video_path_str = Config.VIDEO_FILE_PATH
+        if not video_path_str:
+            logging.warning("[系統] 檔案模式已啟用，但未提供 VIDEO_FILE_PATH。")
+        else:
+            video_path = Path(video_path_str)
+            if not video_path.is_absolute():
+                video_path = PROJECT_ROOT / video_path
+
+            if video_path.exists():
+                resolution = get_video_resolution(str(video_path))
+                if resolution:
+                    Config.ENCODE_WIDTH, Config.ENCODE_HEIGHT = resolution
+                    logging.info(f"[系統] 已動態更新影像尺寸為: {resolution[0]}x{resolution[1]}")
+                else:
+                    logging.error("[系統] 無法獲取影片解析度，將使用預設值。")
+            else:
+                logging.warning(f"[系統] 未找到有效的影片檔案: {video_path}，將使用預設影像尺寸。")
+
         runner = FileRunner(workers=[], notifier=notifier)
     else:
         logging.critical(
-            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。")
+            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。"
+        )
         if notifier: notifier.stop()
         sys.exit(1)
 
-    # 5. 執行主邏輯
-    if runner:
-        try:
+    # 5. 啟動 Worker 池並執行主邏輯
+    worker_manager = WorkerManager(num_workers=settings.VIDEO_PROCESSING_WORKERS)
+    try:
+        if runner:
+            worker_manager.start_workers()
             runner.run()
-        except (KeyboardInterrupt, SystemExit):
-            logging.info("\n[系統] 收到關閉信號 (Ctrl+C)...")
-        except Exception as e:
-            logging.critical(f"\n[系統] 執行期間發生未預期的嚴重錯誤: {e}", exc_info=True)
-        finally:
+        else:
+            logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("\n[系統] 收到關閉信號 (Ctrl+C)...")
+    except Exception as e:
+        logging.critical(f"\n[系統] 執行期間發生未預期的嚴重錯誤: {e}", exc_info=True)
+    finally:
+        if runner:
             runner.shutdown()
-    else:
-        logging.error("[系統] 未能建立有效的執行器，系統即將關閉。")
-
-    if notifier:
-        notifier.stop()
+        worker_manager.shutdown_workers()
+        logging.info("[系統] MoshouSapient 已完全關閉。")
 
 
 if __name__ == '__main__':
