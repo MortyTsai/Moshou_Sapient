@@ -2,7 +2,7 @@
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。系統採用了穩健的程序級隔離架構，能夠穩定處理 RTSP 即時影像流或本地影片檔案，執行物件偵測、追蹤與高階行為分析。當觸發特定規則時，系統會將結構化的分析結果與事件影片進行持久化儲存，為後續的數據分析和安全審計提供支持。
+MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。系統採用了穩健的**非同步任務佇列架構**，能夠穩定處理 RTSP 即時影像流或本地影片檔案，執行物件偵測、追蹤與高階行為分析。當觸發特定規則時，系統會將結構化的分析結果與事件影片進行持久化儲存，為後續的數據分析和安全審計提供支持。
 
 https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 
@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 
 :construction: **本專案為學習與實踐導向，仍在持續開發中。**
 
-目前已完成核心功能的開發，具備穩定的基礎架構與可靠的行為分析能力。系統架構已為未來的功能擴展 (如多攝影機管理、微服務化) 預留了清晰的介面。歡迎任何形式的建議與討論。
+目前已完成核心功能的開發與一次重大的架構升級。系統現在基於一個更可靠、更具擴展性的非同步任務處理模型，為未來的功能擴展 (如多攝影機管理、進階警報功能) 奠定了堅實的基礎。歡迎任何形式的建議與討論。
 
 ## 核心特性
 
@@ -18,9 +18,11 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
     -   **AI 推論**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎進行加速，實現高速物件偵測與特徵提取。
     -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，特別引入了**記憶體幀池**架構，將整個影片一次性預讀取至記憶體，實現了 I/O 的完全並行化與絕對的畫面同步，極大地提升了影片繪製與編碼的處理效率。
 
--   **工業級程序隔離架構 (Industrial-Grade Process Isolation)**:
-    -   **FILE 模式 (檔案處理)**: 將資源密集型的 AI 推論任務完全封裝在一個獨立的作業系統子程序中執行。這種設計從根本上保證了主應用程式的穩定性和響應能力。
-    -   **RTSP 模式 (即時串流)**: 採用「**分析與處理分離**」的先進架構。主程序被極度輕量化，僅負責從攝影機接收影像並進行即時 AI 分析與警報觸發；所有高負載的影片繪圖與硬體編碼任務，則被卸載到一個獨立的、非同步執行的影片處理子程序中，徹底解決了資源競爭導致的性能瓶頸，確保 24/7 監控的絕對穩定。
+-   **工業級非同步任務佇列架構 (Industrial-Grade Asynchronous Task Queue Architecture)**:
+    -   **生產者-消費者模型**: 系統被徹底解耦為「生產者」（負責即時分析與事件偵測）和「消費者」（負責高負載的影片生成）。
+    -   **零依賴任務佇列**: 巧妙地利用 **SQLite (WAL 模式)** 實現了一個持久化、執行緒安全的任務佇列，在**不增加任何外部服務依賴**（如 Redis, RabbitMQ）的前提下，實現了工業級的可靠性。
+    -   **削峰填谷與可靠性**: 即使瞬間觸發大量事件，任務也只是在佇列中有序排隊，由背景的 Worker 程序池按部就班地處理，從根本上避免了資源風暴，並確保即使程序崩潰，任務也不會遺失。
+    -   **並行處理**: 可透過簡單的設定，啟動多個並行的影片處理 Worker，充分利用多核 CPU 與 GPU 的硬體編碼能力，實現了單機內的水平擴展。
 
 -   **穩健的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法與 **Re-ID** 特徵提取進行多物件追蹤，能夠在一定程度上應對短暫遮擋，為行為分析提供穩定的目標軌跡。
 
@@ -41,7 +43,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
     -   **幀率控制**: 可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片降採樣至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
     -   **編碼策略**: 提供「品質」(`QUALITY`) 模式與「均衡」(`BALANCED`) 模式，後者可將影片控制在指定的平均位元率，實現可預測的檔案大小。
 
--   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services`, `utils` 等多個職責明確的子套件，實現了高度的內聚與解耦。
+-   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services`, `utils`, `workers` 等多個職責明確的子套件，實現了高度的內聚與解耦。
 
 -   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
@@ -72,7 +74,8 @@ MoshouSapient/                                  # 專案根目錄
 │
 ├── data/                                       # 存放專案資料 (執行時生成)
 │   ├── captures/                               # 儲存事件錄影
-│   ├── security_events.db                      # SQLite 資料庫檔案
+│   ├── security_events.db                      # SQLite 事件資料庫檔案
+│   ├── tasks.db                                # SQLite 任務佇列資料庫檔案
 │   └── video_samples/                          # 存放 FILE 模式的範例影片
 │
 ├── docs/                                       # 存放所有文件與相關資源
@@ -86,20 +89,21 @@ MoshouSapient/                                  # 專案根目錄
 │
 └── src/                                        # 存放所有專案原始碼
     └── moshousapient/                          # 專案主 Python 套件
-        ├── __init__.py                         # 將目錄標記為 Python 套件
-        ├── __main__.py                         # 套件執行入口 (python -m moshousapient)
+        ├── __init__.py
+        ├── __main__.py
         │
         ├── core/                               # 核心業務邏輯與協調器
         │   ├── __init__.py
-        │   ├── rtsp_pipeline.py                # (RTSP) 管理單一攝影機完整處理管線的類別
+        │   ├── management.py                   # Worker 程序池生命週期管理器
         │   ├── main.py                         # 應用程式主邏輯，負責初始化與啟動
+        │   ├── rtsp_pipeline.py                # (RTSP) 管理單一攝影機完整處理管線的類別
         │   └── runners.py                      # 執行策略模組 (RTSPRunner / FileRunner)
         │
-        ├── processors/                         # 持續性資料流處理單元
+        ├── processors/                         # 持續性資料流處理單元 (生產者)
         │   ├── __init__.py
         │   ├── base_processor.py               # 處理器執行緒的抽象基礎類別
-        │   ├── event_processor.py              # (RTSP) 根據推論結果進行事件判斷與錄製觸發
-        │   ├── file_result_processor.py        # (FILE) 處理子程序JSON結果並切分事件
+        │   ├── event_processor.py              # (RTSP) 根據推論結果進行事件判斷與任務分派
+        │   ├── file_result_processor.py        # (FILE) 處理子程序JSON結果並分派任務
         │   └── inference_processor.py          # (RTSP) 執行 AI 推論與追蹤
         │
         ├── services/                           # 外部服務與獨立邏輯單元
@@ -107,7 +111,7 @@ MoshouSapient/                                  # 專案根目錄
         │   ├── database_service.py             # 負責所有資料庫互動 (事件儲存, Re-ID)
         │   ├── discord_notifier.py             # Discord Bot 通知服務
         │   ├── isolated_inference_service.py   # (FILE) 獨立的 AI 推論子程序
-        │   └── isolated_video_processor.py     # (RTSP) 獨立的影片繪圖與編碼子程序
+        │   └── task_queue_service.py           # 基於 SQLite 的持久化任務佇列服務
         │
         ├── streams/                            # 資料來源讀取模組
         │   ├── __init__.py
@@ -121,13 +125,17 @@ MoshouSapient/                                  # 專案根目錄
         │   ├── video_utils.py                  # 通用影片 I/O 工具 (解析度獲取, 緩存讀取)
         │   └── visualization_utils.py          # 視覺化繪圖工具 (繪製疊加層)
         │
+        ├── workers/                            # 背景工作程序 (消費者)
+        │   ├── __init__.py
+        │   └── video_processing_worker.py      # 統一的影片繪圖與編碼 Worker
+        │
         ├── web/                                # Web 儀表板子套件
         │   ├── __init__.py
         │   ├── app.py                          # Flask 應用程式與路由定義
         │   └── templates/                      # Web 儀表板的 HTML 樣板
         │       └── index.html                  # 儀表板主頁面樣板
         │
-        ├── config.py                           # 應用程式組態初始化 (載入YAML, 初始化幾何物件)
+        ├── config.py                           # 應用程式組態初始化 (載入YAML)
         ├── database.py                         # 資料庫設定與 Session 管理
         ├── logging_setup.py                    # 全域日誌設定模組
         ├── models.py                           # 資料庫 ORM 模型定義 (Event, Person)
@@ -195,6 +203,10 @@ MoshouSapient/                                  # 專案根目錄
     
     # 【RTSP 模式專用】攝影機的 RTSP 串流網址
     RTSP_URL=""
+
+    # --- 系統效能設定 (可選) ---
+    # 背景影片處理程序的數量。建議值: 2
+    VIDEO_PROCESSING_WORKERS=2
     ```
 
 2.  **設定行為分析規則 (重要)**:
@@ -214,8 +226,8 @@ MoshouSapient/                                  # 專案根目錄
 
 ## 發展藍圖
 
--   **[首要] 架構演進 (Architecture Evolution)**:
-    -   **升級至輕量級任務佇列架構**: 將當前基於 subprocess 的直接呼叫模型，升級為一個基於 SQLite 的、可靠的非同步任務佇列架構。此舉旨在徹底解耦即時分析（生產者）與高負載處理（如影片編碼，消費者）等功能單元。透過引入持久化的任務佇列，我們將在不增加任何外部服務依賴的前提下，實現工業級的系統穩定性、處理流程的可靠性與資源使用的可控性，為高效管理多攝影機的並行事件處理奠定穩固基礎。
+-   **[已完成] 架構演進 (Architecture Evolution)**:
+    -   **升級至輕量級任務佇列架構**: 已成功將專案重構為基於 SQLite 的、可靠的非同步任務佇列架構。此舉徹底解耦了即時分析（生產者）與高負載處理（消費者），實現了工業級的系統穩定性、處理流程的可靠性與資源使用的可控性，為高效管理多攝影機的並行事件處理奠定了穩固基礎。
 -   **進階警報 (Advanced Alerts)**:
     -   **遮蔽警報 (Occlusion Alert)**: 開發基於 AI 偵測的遮蔽警報，當單一可識別物件（如人）的邊界框佔據畫面過大比例時觸發，以防止鏡頭被惡意遮擋。
     -   **畫面異常警報 (Scene Anomaly Alert)**: 開發不依賴 AI 物件偵測的底層影像分析警報，例如畫面凍結、亮度劇變（全黑/全白）等，以增強系統對攝影機本身故障的感知能力。
