@@ -1,4 +1,12 @@
 # src/moshousapient/services/isolated_inference_service.py
+"""
+一個獨立的 AI 推論服務腳本。
+此腳本被設計為透過 subprocess 呼叫，以實現程序級隔離，確保主程序的穩定性。
+它負責對單個影片檔案執行完整的 YOLOv8 物件偵測、追蹤和 Re-ID 特徵提取，
+並將逐幀的詳細分析結果輸出為 JSON 檔案。
+"""
+
+# 1. 標準庫導入
 import argparse
 import json
 import logging
@@ -8,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Any, Union, List, cast, Tuple
 
+# 2. 第三方庫導入
 import cv2
 import numpy as np
 import torch
@@ -23,6 +32,7 @@ src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
+# 3. 本專案相對導入
 from moshousapient.settings import settings
 from moshousapient.utils.geometry_utils import calculate_anchor_points
 from moshousapient.utils.behavior_utils import analyze_roi_status, analyze_tripwire_crossings
@@ -30,15 +40,10 @@ from moshousapient.utils.behavior_utils import analyze_roi_status, analyze_tripw
 
 class BehaviorConfig:
     """在隔離服務中載入並管理行為分析規則。"""
-    # 全域設定
     ANCHOR_POINTS: Union[str, List[str]] = 'bottom_center'
-
-    # ROI 相關設定
     ROI_ENABLED: bool = False
     ROI_SETTINGS: Dict[str, Any] = {}
     ROI_POLYGON_OBJECT: Union[Polygon, None] = None
-
-    # Tripwire 相關設定
     TRIPWIRES_ENABLED: bool = False
     TRIPWIRE_SETTINGS: Dict[str, Any] = {}
     TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
@@ -54,7 +59,6 @@ class BehaviorConfig:
                 config_data = yaml.safe_load(f) or {}
 
             BehaviorConfig.ANCHOR_POINTS = config_data.get('anchor_points', 'bottom_center')
-
             BehaviorConfig.ROI_SETTINGS = config_data.get('roi', {})
             if BehaviorConfig.ROI_SETTINGS.get('enabled', False):
                 polygon_points = BehaviorConfig.ROI_SETTINGS.get('polygon_points', [])
@@ -91,10 +95,10 @@ def load_models() -> Dict[str, Any]:
             return {}
         logging.info(f"偵測到 GPU: {torch.cuda.get_device_name(0)}")
 
+        logging.info("正在預熱 AI 模型...")
         model = YOLO(settings.MODEL_PATH, task='detect')
         reid_model = YOLO(settings.REID_MODEL_PATH)
 
-        logging.info("正在預熱 AI 模型...")
         warmup_frame = np.zeros((settings.ANALYSIS_HEIGHT, settings.ANALYSIS_WIDTH, 3), dtype=np.uint8)
         model.predict(warmup_frame, device=0, verbose=False, classes=[0])
         reid_model.embed(warmup_frame, device=0, verbose=False)
@@ -107,7 +111,7 @@ def load_models() -> Dict[str, Any]:
 
 
 def initialize_tracker() -> Any:
-    """根據設定檔初始化追蹤器。"""
+    """根據設定檔初始化追蹤器物件。"""
     try:
         with open(settings.TRACKER_CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg_dict = yaml.safe_load(f)
@@ -122,7 +126,13 @@ def initialize_tracker() -> Any:
 
 
 def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, Any]):
-    """對指定的影片檔案執行完整的 AI 推論流程，並使用統一的行為分析模組。"""
+    """
+    對指定的影片檔案執行完整的 AI 推論流程。
+
+    :param video_path: 影片檔案的路徑。
+    :param output_json_path: 用於儲存結果的 JSON 檔案路徑。
+    :param models: 包含 'detector' 和 'reid' 模型的字典。
+    """
     logging.info(f"開始處理影片: {video_path}")
     start_time = time.time()
 
@@ -139,10 +149,14 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
         logging.error(f"錯誤: 無法開啟影片檔案 {video_path}")
         sys.exit(1)
 
-    frame_count = 0
-    reid_interval = 5
+    source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
     all_frame_data = []
     track_last_positions = {}
+    frame_count = 0
+    reid_interval = 5
 
     while True:
         ret, frame = cap.read()
@@ -188,7 +202,6 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
             for track in tracks:
                 track_id = int(track[4])
                 bbox = track[:4]
-
                 vis_anchor_strategy = BehaviorConfig.ANCHOR_POINTS
                 if track_id in crossed_status:
                     for tripwire_obj in BehaviorConfig.TRIPWIRE_LINE_OBJECTS:
@@ -210,10 +223,8 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
                     "has_crossed_tripwire": track_id in crossed_status,
                     "anchors": anchor_coords
                 })
-
         all_frame_data.append({"frame_index": frame_count, "tracks": current_frame_tracks_data})
 
-    source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     cap.release()
     end_time = time.time()
     processing_duration = end_time - start_time
@@ -222,8 +233,13 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
     final_results = {
         "video_path": str(video_path),
         "status": "success",
-        "analytics": {"total_frames": frame_count, "source_fps": source_fps,
-                      "processing_duration_sec": processing_duration},
+        "analytics": {
+            "total_frames": frame_count,
+            "source_fps": source_fps,
+            "processing_duration_sec": processing_duration,
+            "source_width": source_width,
+            "source_height": source_height
+        },
         "frames": all_frame_data
     }
 
@@ -233,10 +249,12 @@ def run_inference(video_path: Path, output_json_path: Path, models: Dict[str, An
 
 
 def main():
-    """主函式：解析命令列參數並啟動推論流程。"""
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - [IsolatedInferenceService] - %(levelname)s - %(message)s',
-                        stream=sys.stdout)
+    """
+    主函式：解析命令列參數並啟動推論流程。
+    """
+    log_format = '%(asctime)s - PID:%(process)-6d - %(threadName)-25s - %(levelname)-8s - [IsoInference] %(message)s'
+    logging.basicConfig(level=logging.INFO, format=log_format, stream=sys.stdout)
+
     parser = argparse.ArgumentParser(description="MoshouSapient - 獨立 AI 推論服務")
     parser.add_argument('--video-path', type=Path, required=True)
     parser.add_argument('--output-json-path', type=Path, required=True)
