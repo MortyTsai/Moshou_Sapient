@@ -1,27 +1,43 @@
+# src/moshousapient/core/runners.py
+"""
+此模組定義了應用程式執行的策略模式。
+包含了不同影像來源（RTSP、FILE）的執行器（Runner）類別。
+"""
+
+# 1. 標準庫導入
 import logging
 import subprocess
 import sys
 import tempfile
+import time
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Any
-import json
 
+# 3. 本專案相對導入
 from ..config import Config
 from ..processors.file_result_processor import FileResultProcessor
 from ..settings import PROJECT_ROOT
 
 
 class BaseRunner(ABC):
-    """執行策略的抽象基礎類別。"""
+    """
+    執行策略的抽象基礎類別。
+    """
 
     def __init__(self, workers: List[Any], notifier):
-        """初始化基礎執行器。"""
+        """
+        初始化基礎執行器。
+
+        :param workers: （在此次重構中已部分廢棄）工作單元列表。
+        :param notifier: 用於發送通知的通知器物件。
+        """
         self.workers = workers
         self.notifier = notifier
 
     def start_workers(self):
-        """啟動所有已設定的 CameraWorker。"""
+        """啟動所有已設定的 Worker。"""
         for worker in self.workers:
             worker.start()
 
@@ -42,17 +58,18 @@ class BaseRunner(ABC):
 
 
 class RTSPRunner(BaseRunner):
-    """針對 RTSP 即時串流的執行策略。"""
+    """
+    針對 RTSP 即時串流的執行策略。
+    """
 
     def run(self):
         """啟動永久監控模式，並透過健康檢查來監控 Worker 狀態。"""
-        import time
         logging.info("[系統] 進入 RTSP (永久監控) 模式。")
         self.start_workers()
         time.sleep(5)  # 給予 Worker 啟動時間
 
         if not all(w.is_alive() for w in self.workers):
-            logging.critical("[系統] 一個或多個 Worker 未能成功啟動, 系統將關閉。")
+            logging.critical("[系統] 一個或多個 Worker 未能成功啟動，系統將關閉。")
             return
 
         logging.info("[系統] 所有 Worker 已成功啟動並運行中。")
@@ -68,18 +85,22 @@ class RTSPRunner(BaseRunner):
 
 class FileRunner(BaseRunner):
     """
-    針對本地檔案處理的執行策略 (v8.1.1 架構重塑版)。
-    此執行器透過 subprocess 呼叫一個獨立的推論服務來處理影片，
-    實現了程序級隔離，確保主程序的穩定性。
+    針對本地檔案處理的執行策略 (v2 - 任務佇列版)。
+    此執行器透過 subprocess 呼叫推論服務，然後將結果分派到任務佇列，
+    並等待處理完成或手動中斷。
     """
 
     def __init__(self, workers: List[Any], notifier):
-        """初始化檔案執行器，並創建一個結果處理器。"""
+        """
+        初始化檔案執行器，並創建一個結果處理器。
+        """
         super().__init__(workers, notifier)
         self.result_processor = FileResultProcessor(notifier)
 
     def run(self):
-        """執行基於子程序的檔案處理流程。"""
+        """
+        執行基於子程序的檔案處理流程。
+        """
         logging.info("[FileRunner] 進入 FILE (隔離程序) 模式。")
         video_path_str = Config.VIDEO_FILE_PATH
         if not video_path_str:
@@ -94,18 +115,18 @@ class FileRunner(BaseRunner):
             logging.critical(f"[FileRunner] 錯誤: 影片檔案不存在: {video_path}")
             return
 
-        # 使用 NamedTemporaryFile 確保臨時檔案的唯一性和安全性
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json', encoding='utf-8') as temp_output_file:
-            json_output_path = Path(temp_output_file.name)
-
-        command = [
-            sys.executable, "-m", "moshousapient.services.isolated_inference_service",
-            "--video-path", str(video_path.resolve()),
-            "--output-json-path", str(json_output_path.resolve()),
-            "--behavior-config-path", str(Config.BEHAVIOR_CONFIG_PATH)
-        ]
-
+        json_output_path = None
         try:
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json', encoding='utf-8') as temp_f:
+                json_output_path = Path(temp_f.name)
+
+            command = [
+                sys.executable, "-m", "moshousapient.services.isolated_inference_service",
+                "--video-path", str(video_path.resolve()),
+                "--output-json-path", str(json_output_path.resolve()),
+                "--behavior-config-path", str(Config.BEHAVIOR_CONFIG_PATH)
+            ]
+
             logging.info(f"[FileRunner] 準備執行子程序，結果將輸出至 {json_output_path}")
             process = subprocess.run(
                 command, capture_output=True, text=True,
@@ -128,10 +149,16 @@ class FileRunner(BaseRunner):
             if results:
                 self.result_processor.process_results(results)
 
-        except Exception as e:
-            logging.critical(f"[FileRunner] 執行子程序時發生未預期的錯誤: {e}", exc_info=True)
+            logging.info("[FileRunner] 檔案分析與任務分派完成。主程序將保持運行以等待背景 Worker 處理任務。")
+            logging.info("您可以隨時按 Ctrl+C 來終止所有程序。")
+
+            while True:
+                time.sleep(10)
+
+        except (Exception, KeyboardInterrupt) as e:
+            if not isinstance(e, KeyboardInterrupt):
+                logging.critical(f"[FileRunner] 執行子程序時發生未預期的錯誤: {e}", exc_info=True)
         finally:
-            # 確保臨時檔案在處理結束後被清理
-            if json_output_path.exists():
+            if json_output_path and json_output_path.exists():
                 json_output_path.unlink()
             logging.info("[FileRunner] 檔案處理流程結束。")
