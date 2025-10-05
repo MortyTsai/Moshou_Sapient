@@ -1,6 +1,7 @@
-# src/moshousapient/core/main.py
+# src/moshousapient/core/app_orchestrator.py
 """
-MoshouSapient 應用程式的主入口點。
+MoshouSapient 應用程式的主入口點與協調器。
+
 負責初始化所有組件、根據設定選擇執行策略，並管理應用程式的生命週期。
 """
 
@@ -15,16 +16,21 @@ from typing import Optional, Dict, Any
 import torch
 
 # 3. 本專案相對導入
-from ..config import Config
-from ..logging_setup import setup_logging
-from ..database import init_db
+# 從新的 configs 套件導入
+from ..configs.behavior_config import Config
+from ..configs.logging_config import setup_logging
+from ..configs.settings_config import settings, PROJECT_ROOT
+
+# 從新的 services 套件導入
+from ..services.database_service import init_db
+from ..services.notification_service import NotificationService
+
+# 其他導入路徑更新
 from ..web.app import create_flask_app
-from ..settings import settings, PROJECT_ROOT
-from ..services.discord_notifier import DiscordNotifier
-from ..utils.video_utils import get_video_resolution
-from .rtsp_pipeline import RTSPPipeline
-from .runners import RTSPRunner, FileRunner, BaseRunner
-from .management import WorkerManager
+from ..utils.video_io_utils import get_video_resolution
+from ..processors.rtsp_processing_pipeline import RTSPPipeline
+from .producer_runners import RTSPProducerRunner, FileProducerRunner, BaseRunner
+from .worker_manager import WorkerManager
 
 
 def pre_flight_checks() -> bool:
@@ -65,7 +71,8 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         source_name = "RTSP-Cam"
         protocol_setting = Config.RTSP_TRANSPORT_PROTOCOL.lower()
         if protocol_setting not in ["udp", "tcp"]:
-            logging.warning(f"[設定警告] 無效的 RTSP_TRANSPORT_PROTOCOL: '{protocol_setting}'。將使用預設值 'udp'。")
+            logging.warning(f"[設定警告] 無效的 RTSP_TRANSPORT_PROTOCOL: "
+                            f"'{protocol_setting}'。將使用預設值 'udp'。")
             transport_protocol = "udp"
         else:
             transport_protocol = protocol_setting
@@ -81,9 +88,8 @@ def main():
     """
     應用程式主入口點。
     """
-    # 1. 基礎初始化 (將日誌設定移至最頂部)
+    # 1. 基礎初始化 (日誌和設定)
     setup_logging()
-
     Config.initialize_static_settings()
 
     if not pre_flight_checks():
@@ -92,10 +98,11 @@ def main():
     init_db()
 
     # 2. 初始化通知器 (所有模式共用)
-    notifier = None
+    notifier: Optional[NotificationService] = None
     if Config.DISCORD_ENABLED:
         if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
-            notifier = DiscordNotifier(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
+            notifier = NotificationService(token=Config.DISCORD_TOKEN,
+                                           channel_id=Config.DISCORD_CHANNEL_ID)
             notifier.start()
         else:
             logging.warning("[系統] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
@@ -113,7 +120,7 @@ def main():
     web_thread.start()
     logging.info("[系統] Web 儀表板已在 http://127.0.0.1:5000 上運作。")
 
-    # 4. 根據設定選擇並建立執行策略
+    # 4. 根據設定選擇並建立執行策略 (Runner)
     runner: Optional[BaseRunner] = None
     if Config.VIDEO_SOURCE_TYPE == "RTSP":
         try:
@@ -136,7 +143,7 @@ def main():
                 sys.exit(1)
 
             pipelines = [RTSPPipeline(camera_config, model, reid_model, notifier)]
-            runner = RTSPRunner(pipelines, notifier)
+            runner = RTSPProducerRunner(pipelines, notifier)
 
         except Exception as e:
             logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
@@ -162,10 +169,12 @@ def main():
             else:
                 logging.warning(f"[系統] 未找到有效的影片檔案: {video_path}，將使用預設影像尺寸。")
 
-        runner = FileRunner(workers=[], notifier=notifier)
+        runner = FileProducerRunner(workers=[], notifier=notifier)  # workers 參數已廢棄
+
     else:
         logging.critical(
-            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。請在 .env 中設定為 'RTSP' 或 'FILE'。"
+            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。"
+            f"請在 .env 中設定為 'RTSP' 或 'FILE'。"
         )
         if notifier: notifier.stop()
         sys.exit(1)
@@ -187,7 +196,3 @@ def main():
             runner.shutdown()
         worker_manager.shutdown_workers()
         logging.info("[系統] MoshouSapient 已完全關閉。")
-
-
-if __name__ == '__main__':
-    main()
