@@ -1,8 +1,9 @@
-# src/moshousapient/processors/event_processor.py
+# src/moshousapient/processors/rtsp_event_producer.py
 """
-此模組定義了 EventProcessor，負責處理高階行為分析（如 ROI、Tripwire）
-和事件生命週期管理。它作為任務生產者，將待處理的
-影片事件發送到任務佇列。
+定義了 RTSPEventProducer，一個作為生產者的處理器。
+
+[V2.1 架構] 它負責處理高階行為分析 (如 ROI、Tripwire) 和事件生命週期管理，
+並將一個完整的、連續的活動打包成單一任務，發送到任務佇列。
 """
 
 # 1. 標準庫導入
@@ -12,7 +13,6 @@ import pickle
 import tempfile
 import os
 from collections import deque
-from datetime import datetime
 from queue import Empty, Queue
 from threading import Lock
 from typing import Union, Dict, cast, Tuple, Any
@@ -23,24 +23,24 @@ from shapely.geometry import Point
 
 # 3. 本專案相對導入
 from .base_processor import BaseProcessor
-from ..config import Config
+from ..configs.behavior_config import Config
 from ..services.task_queue_service import TaskQueueService
 from ..utils.geometry_utils import calculate_anchor_points
-from ..utils.behavior_utils import analyze_roi_status, analyze_tripwire_crossings
+from ..utils.behavior_analysis_utils import analyze_roi_status, analyze_tripwire_crossings
 
 behavior_logger = logging.getLogger("BehaviorAnalysis")
 
 
-class EventProcessor(BaseProcessor):
+class RTSPEventProducer(BaseProcessor):
     """
-    負責處理高階行為分析（如 ROI、Tripwire）和事件生命週期管理的處理器。
+    負責處理高階行為分析和事件生命週期管理的處理器。
     它作為一個生產者，將偵測到的事件打包成任務並發送到 TaskQueueService。
     """
 
     def __init__(self, frame_queue: Queue, shared_state: dict, state_lock: Lock,
-                 notifier, target_fps: float, name: str = "EventProcessor"):
+                 notifier, target_fps: float, name: str = "RTSPEventProducer"):
         """
-        初始化 EventProcessor。
+        初始化 RTSPEventProducer。
 
         :param frame_queue: 包含幀數據的輸入佇列。
         :param shared_state: 用於與其他處理器交換狀態的共享字典。
@@ -97,7 +97,6 @@ class EventProcessor(BaseProcessor):
                     delta_time = current_time - self.last_processed_time
                     self.last_processed_time = current_time
                     self.time_accumulator += delta_time
-
                     if self.time_accumulator < self.min_frame_interval:
                         continue
                     self.time_accumulator -= self.min_frame_interval
@@ -207,13 +206,11 @@ class EventProcessor(BaseProcessor):
         if self.is_capturing_event:
             self.event_recording_frames.append(frame_data)
 
-            post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
-            max_duration_reached = (current_time - self.event_start_time) > Config.MAX_EVENT_DURATION
+        post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
 
+        if self.is_capturing_event:
             if not person_detected_now and post_event_elapsed:
                 self._end_event(current_time, "人物消失")
-            elif max_duration_reached:
-                self._end_event(current_time, "超過最大錄影時長", is_segment=True)
         else:
             self.frame_buffer.append(frame_data)
 
@@ -224,24 +221,16 @@ class EventProcessor(BaseProcessor):
                 self._start_event(current_time)
 
     def _start_event(self, current_time: float):
-        """
-        開始一個新的事件錄製。
-
-        :param current_time: 事件開始的時間戳。
-        """
+        """開始一個新的事件錄製。"""
         self.is_capturing_event = True
         self.event_start_time = current_time
         self.current_event_type = "person_detected"
         self.event_recording_frames = list(self.frame_buffer)
         logging.info(f">>> [事件] 偵測到 '{self.current_event_type}' 事件! 開始錄製...")
 
-    def _end_event(self, current_time: float, reason: str, is_segment: bool = False):
+    def _end_event(self, current_time: float, reason: str):
         """
-        結束當前事件錄製或進行分段，並將任務發送到佇列。
-
-        :param current_time: 事件結束的時間戳。
-        :param reason: 事件結束的原因。
-        :param is_segment: 是否為事件分段。
+        結束當前事件錄製，並將完整的事件打包發送到佇列。
         """
         logging.info(f"[事件] 事件結束 ({reason})。")
 
@@ -249,53 +238,32 @@ class EventProcessor(BaseProcessor):
             self._dispatch_video_task()
 
         self.last_event_end_time = current_time
-        if is_segment:
-            logging.info(">>> [事件] 進行事件分段，準備錄製下一段...")
-            overlap_frames = int(Config.PRE_EVENT_SECONDS * self.target_fps)
-            self.event_recording_frames = self.event_recording_frames[-overlap_frames:]
-            self.event_start_time = current_time
-            self.current_event_type = "person_detected"
-        else:
-            self.is_capturing_event = False
-            self.current_event_type = None
-            self.event_recording_frames.clear()
-            self.dwell_time_trackers.clear()
-            self.tripwire_alert_ids.clear()
-            self.track_last_positions.clear()
+
+        # [移除] is_segment 邏輯，事件結束後總是完全重置狀態
+        self.is_capturing_event = False
+        self.current_event_type = None
+        self.event_recording_frames.clear()
+        self.dwell_time_trackers.clear()
+        self.tripwire_alert_ids.clear()
+        self.track_last_positions.clear()
 
     def _dispatch_video_task(self):
-        """
-        將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。
-        """
+        """將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。"""
         temp_file_path = ""
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl', dir=str(Config.CAPTURES_DIR)) as temp_f:
                 pickle.dump(self.event_recording_frames, temp_f)
                 temp_file_path = temp_f.name
 
-            now = datetime.fromtimestamp(self.event_start_time)
-            filename = f"{self.current_event_type}_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
-            output_path = os.path.join(Config.CAPTURES_DIR, filename)
-
-            rendering_config = {
-                "roi_enabled": Config.ROI_ENABLED,
-                "roi_polygon": Config.ROI_POLYGON_OBJECT,
-                "tripwires_enabled": Config.TRIPWIRES_ENABLED,
-                "tripwire_line_objects": Config.TRIPWIRE_LINE_OBJECTS,
-            }
-
             payload = {
                 "data_path": temp_file_path,
-                "output_path": output_path,
                 "event_type": self.current_event_type,
                 "source_meta": {},
-                "event_start_frame_index": -1,
-                "rendering_config": rendering_config
             }
 
             payload_bytes = pickle.dumps(payload)
-
             task_id = self.task_queue.add_task(payload_bytes)
+
             if task_id:
                 logging.info(f"已成功將事件 '{self.current_event_type}' 作為任務 ID {task_id} 發送到佇列。")
             else:
@@ -309,11 +277,7 @@ class EventProcessor(BaseProcessor):
                 os.remove(temp_file_path)
 
     def _set_event_type(self, new_type: str):
-        """
-        根據優先級提升當前事件的類型。
-
-        :param new_type: 新的事件類型。
-        """
+        """根據優先級提升當前事件的類型。"""
         priority_map = {'tripwire_alert': 2, 'dwell_alert': 1, 'person_detected': 0}
         current_priority = priority_map.get(self.current_event_type, -1)
         new_priority = priority_map.get(new_type, -1)
@@ -321,15 +285,10 @@ class EventProcessor(BaseProcessor):
         if new_priority > current_priority:
             if self.is_capturing_event:
                 logging.info(f">>> [事件升級] '{self.current_event_type}' 事件已升級為 '{new_type}'")
-            self.current_event_type = new_type
+                self.current_event_type = new_type
 
     def _handle_dwell_logic(self, track_roi_status: Dict[int, bool], current_time: float):
-        """
-        處理所有與 ROI 區域停留相關的邏輯。
-
-        :param track_roi_status: 當前幀的 ROI 狀態字典。
-        :param current_time: 當前幀的時間戳。
-        """
+        """處理所有與 ROI 區域停留相關的邏輯。"""
         if not Config.ROI_ENABLED:
             return
 
@@ -358,11 +317,7 @@ class EventProcessor(BaseProcessor):
             del self.dwell_time_trackers[track_id]
 
     def _handle_tripwire_logic(self, crossed_ids_map: Dict[int, bool]):
-        """
-        處理所有與警戒線穿越相關的邏輯。
-
-        :param crossed_ids_map: 包含已穿越目標 ID 的字典。
-        """
+        """處理所有與警戒線穿越相關的邏輯。"""
         newly_crossed_ids = set(crossed_ids_map.keys()) - self.tripwire_alert_ids
         if newly_crossed_ids:
             self._set_event_type("tripwire_alert")
