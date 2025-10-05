@@ -1,12 +1,28 @@
-# src/moshousapient/utils/reid_utils.py
+# src/moshousapient/utils/reid_matching_utils.py
+"""
+提供與 Re-ID (人物重識別) 特徵匹配相關的輔助函式。
+"""
+
+# 1. 標準庫導入
 import pickle
-import numpy as np
 from typing import Optional
+
+# 2. 第三方庫導入
+import numpy as np
 from numpy.typing import NDArray
-from ..models import Person
+
+# 3. 本專案相對導入
+from ..services.database_models import Person
+
 
 def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
-    """計算兩個 NumPy 特徵向量之間的餘弦相似度。"""
+    """
+    計算兩個 NumPy 特徵向量之間的餘弦相似度。
+
+    :param feature1: 第一個特徵向量。
+    :param feature2: 第二個特徵向量。
+    :return: 介於 -1 和 1 之間的相似度分數。
+    """
     feature1 = np.asarray(feature1)
     feature2 = np.asarray(feature2)
 
@@ -26,7 +42,8 @@ def find_best_match_in_gallery(new_feature: NDArray,
                                match_threshold: float
                                ) -> Optional[Person]:
     """
-    在給定的畫廊（候選人列表）中，為新特徵尋找超過指定閾值的最佳匹配。
+    在給定的畫廊 (候選人列表) 中，為新特徵尋找超過指定閾值的最佳匹配。
+
     此函式已解耦，不依賴任何全域 Config 模組。
 
     :param new_feature: 新的 Re-ID 特徵向量。
