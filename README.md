@@ -14,38 +14,38 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 
 ## 核心特性
 
--   **高效能推論與編碼管線 (High-Performance Inference & Encoding Pipeline)**:
+-   **高效能推論與編碼**:
     -   **AI 推論**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎進行加速，實現高速物件偵測與特徵提取。
-    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，特別引入了**記憶體幀池**架構，將整個影片一次性預讀取至記憶體，實現了 I/O 的完全並行化與絕對的畫面同步，極大地提升了影片繪製與編碼的處理效率。
+    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，引入了**記憶體幀池**架構，將影片一次性預讀取至記憶體，實現 I/O 的完全並行化與畫面同步，提升了處理效率。
 
--   **工業級非同步任務佇列架構 (Industrial-Grade Asynchronous Task Queue Architecture)**:
-    -   **生產者-消費者模型**: 系統被徹底解耦為「生產者」（負責即時分析與事件偵測）和「消費者」（負責高負載的影片生成）。
-    -   **零依賴任務佇列**: 巧妙地利用 **SQLite (WAL 模式)** 實現了一個持久化、執行緒安全的任務佇列，在**不增加任何外部服務依賴**（如 Redis, RabbitMQ）的前提下，實現了工業級的可靠性。
-    -   **削峰填谷與可靠性**: 即使瞬間觸發大量事件，任務也只是在佇列中有序排隊，由背景的 Worker 程序池按部就班地處理，從根本上避免了資源風暴，並確保即使程序崩潰，任務也不會遺失。
-    -   **並行處理**: 可透過簡單的設定，啟動多個並行的影片處理 Worker，充分利用多核 CPU 與 GPU 的硬體編碼能力，實現了單機內的水平擴展。
+-   **工業級非同步任務佇列架構**:
+    -   **生產者-消費者模型**: 系統被解耦為「生產者」（負責即時分析與事件偵測）和「消費者」（負責高負載的影片生成），兩者通過任務佇列進行非同步通信。
+    -   **零依賴任務佇列**: 利用 **SQLite (WAL 模式)** 實現了一個持久化、執行緒安全的任務佇列，在不增加任何外部服務依賴（如 Redis, RabbitMQ）的前提下，實現了工業級的可靠性。
+    -   **負載平滑與可靠性**: 即使瞬間觸發大量事件，任務也只是在佇列中有序排隊，由背景的 Worker 程序池穩定處理，避免了資源競爭，並確保即使程序崩潰，任務也不會遺失。
+    -   **並行處理**: 可透過設定啟動多個並行的影片處理 Worker，充分利用多核 CPU 與 GPU 的硬體編碼能力，實現了單機內的水平擴展。
 
--   **穩健的物件追蹤 (Robust Object Tracking)**: 採用 **BOTSORT** 演算法與 **Re-ID** 特徵提取進行多物件追蹤，能夠在一定程度上應對短暫遮擋，為行為分析提供穩定的目標軌跡。
+-   **穩健的物件追蹤**: 採用 **BOTSORT** 演算法與 **Re-ID** 特徵提取進行多物件追蹤，能夠在一定程度上應對短暫遮擋，為行為分析提供穩定的目標軌跡。
 
--   **高階行為分析與動態視覺化 (Advanced Analysis & Dynamic Visualization)**:
+-   **高階行為分析與動態視覺化**:
     -   **全模式功能對等**: 所有高階行為分析與視覺化功能均**同時支援 RTSP 與 FILE 兩種模式**，確保了行為的一致性。
-    -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援使用者自訂多邊形感興趣區域 (ROI)，能夠偵測目標是否進入特定區域，並在停留時間超過預設閾值時觸發警報。
-    -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援使用者定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向的跨越發生時觸發警報。
-    -   **精細化錨點策略 (Granular Anchor Strategy)**: 除了可設定全域錨點外，現在**每一條** ROI 或 Tripwire 規則都可以獨立覆寫 `anchor_points` 參數。這使得系統能夠在同一個畫面中，為不同位置、不同形態的目標（如遠處的全身人像與近處的半身人像）應用最合適的判斷基準點，極大地提升了複雜場景下的分析準確性。
-    -   **工業級視覺化回饋**: 自動在生成的事件影片中繪製半透明的 ROI 區域、帶方向的警戒線箭頭。更重要的是，系統具備以下進階視覺化能力：
-        -   **主目標凸顯**: 在多目標場景中，自動以鮮明色彩和完整不透明度**凸顯觸發事件的主要目標**，並將次要目標以半透明灰色弱化顯示，讓影片證據一目了然。
+    -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援自訂多邊形感興趣區域 (ROI)，能夠偵測目標是否進入特定區域，並在停留時間超過預設閾值時觸發警報。
+    -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向的跨越發生時觸發警報。
+    -   **精細化錨點策略 (Granular Anchor Strategy)**: 除了可設定全域錨點外，**每一條** ROI 或 Tripwire 規則都可以獨立覆寫 `anchor_points` 參數。這使得系統能夠在同一個畫面中，為不同形態的目標（如遠處的全身人像與近處的半身人像）應用最合適的判斷基準點，提升了複雜場景下的分析準確性。
+    -   **專業級視覺化回饋**: 自動在生成的事件影片中繪製半透明的 ROI 區域、帶方向的警戒線箭頭，並具備以下進階視覺化能力：
+        -   **主目標凸顯**: 在多目標場景中，以鮮明色彩**凸顯觸發事件的主要目標**，並將次要目標以半透明灰色弱化顯示，讓影片證據一目了然。
         -   **狀態疊加層**: 在影片左上角清晰地疊加**事件類型**與**動態持續時間**，為影片證據提供關鍵的上下文資訊。
-        -   **錨點繪製**: 可在影片中繪製出用於行為判斷的**錨點**，極大地增強了系統的可除錯性與演算法透明度。
+        -   **錨點繪製**: 可在影片中繪製出用於行為判斷的**錨點**，增強了系統的可除錯性與演算法透明度。
 
--   **事件驅動的持久化 (Event-Driven Persistence)**: 系統能在偵測到異常行為時觸發事件，並使用 SQLAlchemy ORM 將事件元數據高效存入 SQLite 資料庫 (WAL 模式)，便於後續查詢與管理。
+-   **事件驅動的持久化**: 系統能在偵測到異常行為時觸發事件，並使用 SQLAlchemy ORM 將事件元數據高效存入 SQLite 資料庫 (WAL 模式)，便於後續查詢與管理。
 
--   **靈活的影片輸出設定 (Flexible Video Output Configuration)**:
+-   **靈活的影片輸出設定**:
     -   **事件分段**: 內建 `MAX_EVENT_DURATION` 機制，能自動將長時間的連續事件分割成多個較短的影片檔案，便於管理和傳輸。
-    -   **幀率控制**: 可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片降採樣至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
+    -   **幀率控制**: 可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片轉換至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
     -   **編碼策略**: 提供「品質」(`QUALITY`) 模式與「均衡」(`BALANCED`) 模式，後者可將影片控制在指定的平均位元率，實現可預測的檔案大小。
 
--   **分層與模組化架構 (Layered & Modular Architecture)**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `core`, `streams`, `processors`, `services`, `utils`, `workers` 等多個職責明確的子套件，實現了高度的內聚與解耦。
+-   **分層與模組化架構**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `configs`, `core`, `processors`, `services`, `streams`, `utils`, `workers` 等多個職責明確的子套件，實現了高度的內聚與解耦。
 
--   **遠端存取與可選通知 (Remote Access & Optional Notifications)**:
+-   **遠端存取與可選通知**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
     -   可選整合 **Discord Bot**，以非同步方式推送即時警報。
 
@@ -68,7 +68,7 @@ MoshouSapient/                                  # 專案根目錄
 ├── README.md                                   # 專案說明文件
 ├── requirements.txt                            # Python 依賴套件列表
 │
-├── configs/                                    # 存放所有靜態設定檔
+├── configs/                                    # 存放所有使用者設定檔
 │   ├── behavior_analysis.yaml                  # 行為分析規則 (ROI, 警戒線, 錨點)
 │   └── custom_botsort.yaml                     # BoT-SORT 追蹤器客製化參數
 │
@@ -77,10 +77,6 @@ MoshouSapient/                                  # 專案根目錄
 │   ├── security_events.db                      # SQLite 事件資料庫檔案
 │   ├── tasks.db                                # SQLite 任務佇列資料庫檔案
 │   └── video_samples/                          # 存放 FILE 模式的範例影片
-│
-├── docs/                                       # 存放所有文件與相關資源
-│   └── assets/
-│       └── demo.mp4                            # README 中使用的演示影片
 │
 ├── models/                                     # 存放所有 AI 模型資產
 │
@@ -92,54 +88,55 @@ MoshouSapient/                                  # 專案根目錄
         ├── __init__.py
         ├── __main__.py
         │
-        ├── core/                               # 核心業務邏輯與協調器
+        ├── configs/                            # 應用程式配置層 (加載與解析)
         │   ├── __init__.py
-        │   ├── management.py                   # Worker 程序池生命週期管理器
-        │   ├── main.py                         # 應用程式主邏輯，負責初始化與啟動
-        │   ├── rtsp_pipeline.py                # (RTSP) 管理單一攝影機完整處理管線的類別
-        │   └── runners.py                      # 執行策略模組 (RTSPRunner / FileRunner)
+        │   ├── behavior_config.py              # 載入 YAML 行為規則
+        │   ├── logging_config.py               # 全域日誌設定
+        │   └── settings_config.py              # 載入 .env 靜態設定
         │
-        ├── processors/                         # 持續性資料流處理單元 (生產者)
+        ├── core/                               # 應用程式協調與管理
+        │   ├── __init__.py
+        │   ├── app_orchestrator.py             # 應用程式主協調器 (啟動與關閉)
+        │   ├── producer_runners.py             # 執行策略模組 (RTSP/FILE)
+        │   └── worker_manager.py               # Worker 程序池生命週期管理器
+        │
+        ├── processors/                         # 數據分析與任務生產 (生產者)
         │   ├── __init__.py
         │   ├── base_processor.py               # 處理器執行緒的抽象基礎類別
-        │   ├── event_processor.py              # (RTSP) 根據推論結果進行事件判斷與任務分派
-        │   ├── file_result_processor.py        # (FILE) 處理子程序JSON結果並分派任務
-        │   └── inference_processor.py          # (RTSP) 執行 AI 推論與追蹤
+        │   ├── file_event_producer.py          # (FILE) 處理 JSON 結果並生產任務
+        │   ├── inference_processor.py          # (RTSP) 執行 AI 推論與追蹤
+        │   ├── rtsp_event_producer.py          # (RTSP) 進行事件判斷與任務生產
+        │   └── rtsp_processing_pipeline.py     # (RTSP) 串聯處理流程的管線
         │
-        ├── services/                           # 外部服務與獨立邏輯單元
+        ├── services/                           # 共享的基礎設施服務
         │   ├── __init__.py
-        │   ├── database_service.py             # 負責所有資料庫互動 (事件儲存, Re-ID)
-        │   ├── discord_notifier.py             # Discord Bot 通知服務
+        │   ├── database_models.py              # 資料庫 ORM 模型定義
+        │   ├── database_service.py             # 資料庫連接與會話管理
         │   ├── isolated_inference_service.py   # (FILE) 獨立的 AI 推論子程序
+        │   ├── notification_service.py         # Discord Bot 通知服務
         │   └── task_queue_service.py           # 基於 SQLite 的持久化任務佇列服務
         │
-        ├── streams/                            # 資料來源讀取模組
+        ├── streams/                            # 原始數據流獲取
         │   ├── __init__.py
-        │   └── video_streamer.py               # (RTSP) 使用 FFmpeg 從 RTSP 來源讀取影像串流
+        │   └── video_streamer.py               # (RTSP) 使用 FFmpeg 讀取影像串流
         │
-        ├── utils/                              # 通用、已解耦的工具函式子套件
+        ├── utils/                              # 無狀態的通用工具函式
         │   ├── __init__.py
-        │   ├── behavior_utils.py               # 行為分析演算法 (ROI, Tripwire 判斷)
-        │   ├── geometry_utils.py               # 通用幾何計算工具 (錨點計算等)
-        │   ├── reid_utils.py                   # Re-ID 相關演算法 (餘弦相似度)
-        │   ├── video_utils.py                  # 通用影片 I/O 工具 (解析度獲取, 緩存讀取)
-        │   └── visualization_utils.py          # 視覺化繪圖工具 (繪製疊加層)
+        │   ├── behavior_analysis_utils.py      # 行為分析演算法 (ROI, Tripwire)
+        │   ├── geometry_utils.py               # 通用幾何計算工具
+        │   ├── reid_matching_utils.py          # Re-ID 特徵匹配演算法
+        │   ├── video_io_utils.py               # 通用影片 I/O 工具
+        │   └── visualization_utils.py          # 視覺化繪圖工具
         │
         ├── workers/                            # 背景工作程序 (消費者)
         │   ├── __init__.py
-        │   └── video_processing_worker.py      # 統一的影片繪圖與編碼 Worker
+        │   └── video_consumer_worker.py        # 統一的影片分段、繪圖與編碼 Worker
         │
-        ├── web/                                # Web 儀表板子套件
-        │   ├── __init__.py
-        │   ├── app.py                          # Flask 應用程式與路由定義
-        │   └── templates/                      # Web 儀表板的 HTML 樣板
-        │       └── index.html                  # 儀表板主頁面樣板
-        │
-        ├── config.py                           # 應用程式組態初始化 (載入YAML)
-        ├── database.py                         # 資料庫設定與 Session 管理
-        ├── logging_setup.py                    # 全域日誌設定模組
-        ├── models.py                           # 資料庫 ORM 模型定義 (Event, Person)
-        └── settings.py                         # Pydantic 靜態設定管理 (讀取 .env)
+        └── web/                                # Web 儀表板
+            ├── __init__.py
+            ├── app.py                          # Flask 應用與路由
+            └── templates/                      # HTML 樣板
+                └── index.html
 ```
 ## 環境準備
 
@@ -182,7 +179,7 @@ MoshouSapient/                                  # 專案根目錄
     -   從指定來源下載 `yolo11s.pt` (物件偵測) 和 `yolo11s-cls.pt` (特徵提取) 模型檔案，並放置在 `models/` 資料夾中。
     -   執行轉換腳本，將**偵測模型**生成為 TensorRT 引擎：
         ```bash
-        python scripts/export_tensorrt.py
+        python scripts/export_tensor_rt.py
         ```
     -   成功後會在 `models/` 資料夾下生成 `yolo11s.engine` 檔案。
 
@@ -227,7 +224,7 @@ MoshouSapient/                                  # 專案根目錄
 ## 發展藍圖
 
 -   **[已完成] 架構演進 (Architecture Evolution)**:
-    -   **升級至輕量級任務佇列架構**: 已成功將專案重構為基於 SQLite 的、可靠的非同步任務佇列架構。此舉徹底解耦了即時分析（生產者）與高負載處理（消費者），實現了工業級的系統穩定性、處理流程的可靠性與資源使用的可控性，為高效管理多攝影機的並行事件處理奠定了穩固基礎。
+    -   **升級至任務佇列架構**: 已成功將專案重構為基於 SQLite 的、可靠的非同步任務佇列架構。此舉解耦了即時分析（生產者）與高負載處理（消費者），實現了系統穩定性、處理流程的可靠性與資源使用的可控性。
 -   **進階警報 (Advanced Alerts)**:
     -   **遮蔽警報 (Occlusion Alert)**: 開發基於 AI 偵測的遮蔽警報，當單一可識別物件（如人）的邊界框佔據畫面過大比例時觸發，以防止鏡頭被惡意遮擋。
     -   **畫面異常警報 (Scene Anomaly Alert)**: 開發不依賴 AI 物件偵測的底層影像分析警報，例如畫面凍結、亮度劇變（全黑/全白）等，以增強系統對攝影機本身故障的感知能力。
