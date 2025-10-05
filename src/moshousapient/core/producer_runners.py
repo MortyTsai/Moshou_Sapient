@@ -1,7 +1,8 @@
-# src/moshousapient/core/runners.py
+# src/moshousapient/core/producer_runners.py
 """
-此模組定義了應用程式執行的策略模式。
-包含了不同影像來源（RTSP、FILE）的執行器（Runner）類別。
+此模組定義了應用程式執行的策略模式，包含了不同影像來源的執行器 (Runner) 類別。
+
+Runner 負責啟動並管理特定模式下的生產者 (Producer) 流程。
 """
 
 # 1. 標準庫導入
@@ -16,9 +17,9 @@ from pathlib import Path
 from typing import List, Any
 
 # 3. 本專案相對導入
-from ..config import Config
-from ..processors.file_result_processor import FileResultProcessor
-from ..settings import PROJECT_ROOT
+from ..configs.behavior_config import Config
+from ..processors.file_event_producer import FileEventProducer
+from ..configs.settings_config import PROJECT_ROOT
 
 
 class BaseRunner(ABC):
@@ -30,7 +31,7 @@ class BaseRunner(ABC):
         """
         初始化基礎執行器。
 
-        :param workers: （在此次重構中已部分廢棄）工作單元列表。
+        :param workers: (在此次重構中已部分廢棄) 工作單元列表。
         :param notifier: 用於發送通知的通知器物件。
         """
         self.workers = workers
@@ -48,7 +49,7 @@ class BaseRunner(ABC):
 
     def shutdown(self):
         """執行一個統一、優雅的關閉程序。"""
-        logging.info("[系統] 正在優雅地關閉所有服務, 請稍候...")
+        logging.info("[系統] 正在優雅地關閉所有服務，請稍候...")
         if self.workers:
             for worker in self.workers:
                 worker.stop()
@@ -57,9 +58,10 @@ class BaseRunner(ABC):
         logging.info("[系統] 系統已安全關閉。")
 
 
-class RTSPRunner(BaseRunner):
+class RTSPProducerRunner(BaseRunner):
     """
     針對 RTSP 即時串流的執行策略。
+    負責管理一個或多個 RTSP 處理管線 (Pipeline) 的生命週期。
     """
 
     def run(self):
@@ -69,23 +71,24 @@ class RTSPRunner(BaseRunner):
         time.sleep(5)  # 給予 Worker 啟動時間
 
         if not all(w.is_alive() for w in self.workers):
-            logging.critical("[系統] 一個或多個 Worker 未能成功啟動，系統將關閉。")
+            logging.critical("[系統] 一個或多個處理管線未能成功啟動，系統將關閉。")
             return
 
-        logging.info("[系統] 所有 Worker 已成功啟動並運行中。")
+        logging.info("[系統] 所有處理管線已成功啟動並運行中。")
         try:
             while True:
                 time.sleep(Config.HEALTH_CHECK_INTERVAL)
                 if not all(w.is_alive() for w in self.workers):
-                    logging.critical("[系統] 偵測到 Worker 異常停止! 系統將準備關閉。")
+                    logging.critical("[系統] 偵測到處理管線異常停止！系統將準備關閉。")
                     break
         except KeyboardInterrupt:
             logging.info("\n[系統] 收到關閉信號 (Ctrl+C)...")
 
 
-class FileRunner(BaseRunner):
+class FileProducerRunner(BaseRunner):
     """
     針對本地檔案處理的執行策略 (v2 - 任務佇列版)。
+
     此執行器透過 subprocess 呼叫推論服務，然後將結果分派到任務佇列，
     並等待處理完成或手動中斷。
     """
@@ -95,12 +98,10 @@ class FileRunner(BaseRunner):
         初始化檔案執行器，並創建一個結果處理器。
         """
         super().__init__(workers, notifier)
-        self.result_processor = FileResultProcessor(notifier)
+        self.result_processor = FileEventProducer(notifier)
 
     def run(self):
-        """
-        執行基於子程序的檔案處理流程。
-        """
+        """執行基於子程序的檔案處理流程。"""
         logging.info("[FileRunner] 進入 FILE (隔離程序) 模式。")
         video_path_str = Config.VIDEO_FILE_PATH
         if not video_path_str:
@@ -151,7 +152,6 @@ class FileRunner(BaseRunner):
 
             logging.info("[FileRunner] 檔案分析與任務分派完成。主程序將保持運行以等待背景 Worker 處理任務。")
             logging.info("您可以隨時按 Ctrl+C 來終止所有程序。")
-
             while True:
                 time.sleep(10)
 
