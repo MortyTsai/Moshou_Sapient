@@ -1,26 +1,42 @@
+# src/moshousapient/processors/inference_processor.py
+"""
+定義了 InferenceProcessor，一個專門負責執行 AI 模型推論和物件追蹤的處理器。
+"""
+
+# 1. 標準庫導入
 import logging
 import time
 from queue import Empty, Queue
 from threading import Lock
 from typing import Callable
 
-import cv2
+# 2. 第三方庫導入
 import numpy as np
 from ultralytics import YOLO
 
+# 3. 本專案相對導入
 from .base_processor import BaseProcessor
-from ..config import Config
 
 
 class InferenceProcessor(BaseProcessor):
     """
-    專門負責執行 AI 模型推論（物件偵測、Re-ID）和物件追蹤的處理器。
+    專門負責執行 AI 模型推論 (物件偵測、Re-ID) 和物件追蹤的處理器。
     """
 
     def __init__(self, frame_queue: Queue, shared_state: dict, state_lock: Lock,
                  model: YOLO, reid_model: YOLO, tracker_factory: Callable,
                  name: str = "InferenceProcessor"):
-        """初始化 InferenceProcessor。"""
+        """
+        初始化 InferenceProcessor。
+
+        :param frame_queue: 包含待處理幀的輸入佇列。
+        :param shared_state: 用於與其他處理器交換狀態的共享字典。
+        :param state_lock: 用於保護 shared_state 的執行緒鎖。
+        :param model: 用於物件偵測的 YOLO 模型。
+        :param reid_model: 用於特徵提取的 Re-ID 模型。
+        :param tracker_factory: 一個用於創建追蹤器實例的工廠函式。
+        :param name: 處理器的名稱。
+        """
         super().__init__(name)
         self.frame_queue = frame_queue
         self.shared_state = shared_state
@@ -31,10 +47,12 @@ class InferenceProcessor(BaseProcessor):
         self.tracker = self.tracker_factory()
 
     def _target_func(self):
-        """主處理迴圈，持續從佇列獲取幀並執行推論和追蹤。"""
-        logging.info(f"[{self.name}] 處理器已啟動, 使用 GPU 進行推論。")
+        """
+        主處理迴圈，持續從佇列獲取幀並執行推論和追蹤。
+        """
+        logging.info(f"[{self.name}] 處理器已啟動，使用 GPU 進行推論。")
         frame_counter = 0
-        reid_interval = 5
+        reid_interval = 5  # 每 5 幀提取一次 Re-ID 特徵
 
         while not self.stop_event.is_set():
             try:
@@ -43,21 +61,17 @@ class InferenceProcessor(BaseProcessor):
 
                 item = self.frame_queue.get(timeout=1)
                 frame_counter += 1
-                original_frame = item['frame']
 
-                frame_low_res = cv2.resize(
-                    original_frame,
-                    (Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT),
-                    interpolation=cv2.INTER_LINEAR
-                )
+                # 圖像縮放已在 VideoStreamer 中完成，這裡直接使用
+                frame_for_inference = item['frame']
 
-                dets_results = self.model(frame_low_res, device=0, verbose=False, classes=[0], conf=0.4)
+                dets_results = self.model(frame_for_inference, device=0, verbose=False, classes=[0], conf=0.4)
                 boxes_on_cpu = dets_results[0].boxes.cpu().numpy()
-                tracks = self.tracker.update(boxes_on_cpu, frame_low_res) if self.tracker else np.empty((0, 8))
+                tracks = self.tracker.update(boxes_on_cpu, frame_for_inference) if self.tracker else np.empty((0, 8))
 
                 reid_features_map = {}
                 if len(tracks) > 0 and (frame_counter % reid_interval == 0):
-                    reid_features_map = self._extract_reid_features(tracks, frame_low_res)
+                    reid_features_map = self._extract_reid_features(tracks, frame_for_inference)
 
                 with self.state_lock:
                     self.shared_state['person_detected'] = len(tracks) > 0
@@ -74,7 +88,13 @@ class InferenceProcessor(BaseProcessor):
         logging.info(f"[{self.name}] 處理器已停止。")
 
     def _extract_reid_features(self, tracks, frame) -> dict:
-        """從追蹤到的物件中提取 Re-ID 特徵。"""
+        """
+        從追蹤到的物件中提取 Re-ID 特徵。
+
+        :param tracks: 追蹤器輸出的結果。
+        :param frame: 用於提取特徵的幀。
+        :return: 一個字典，key 為 track_id，value 為特徵向量。
+        """
         reid_features_map = {}
         track_ids = tracks[:, 4].astype(int)
         xyxy_coords = tracks[:, :4]
