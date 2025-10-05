@@ -1,6 +1,7 @@
-# src/moshousapient/core/management.py
+# src/moshousapient/core/worker_manager.py
 """
-此模組提供 WorkerManager，用於管理背景工作程序（Consumers）的生命週期。
+此模組提供 WorkerManager，用於管理背景工作程序 (Consumers) 的生命週期。
+
 它負責根據應用程式設定啟動、監控和優雅地關閉 Worker 程序池。
 """
 
@@ -14,13 +15,13 @@ import os
 from typing import List
 
 # 3. 本專案相對導入
-from ..config import Config
+from ..configs.behavior_config import Config
 from ..services.task_queue_service import TaskQueueService
 
 
 class WorkerManager:
     """
-    管理 VideoProcessingWorker 子程序池的生命週期。
+    管理 VideoConsumerWorker 子程序池的生命週期。
     """
 
     def __init__(self, num_workers: int):
@@ -31,18 +32,21 @@ class WorkerManager:
         """
         if num_workers < 1:
             raise ValueError("Worker 數量必須至少為 1。")
+
         self.num_workers = num_workers
         self.worker_processes: List[subprocess.Popen] = []
         self.task_queue = TaskQueueService()
         logging.info(f"[WorkerManager] 已初始化，將管理 {self.num_workers} 個 Worker。")
 
     def _cleanup_stale_tasks(self):
-        """
-        清理上次運行可能遺留下來的過期任務。
-        """
-        logging.info("[WorkerManager] 正在檢查是否有過期的任務需要重新排入佇列...")
-        # 使用一個較長的超時時間，例如 10 分鐘，以處理上次運行崩潰的任務
-        self.task_queue.requeue_stale_tasks(timeout_seconds=600)
+        """清理上次運行可能遺留下來的過期任務。"""
+        logging.info("[WorkerManager] 正在檢查是否有因上次異常關閉而遺留的任務需要清理...")
+        # 根據方案 A，我們直接刪除這些任務，而不是重新排隊。
+        deleted_count = self.task_queue.delete_stale_tasks(timeout_seconds=600)
+        if deleted_count > 0:
+            logging.warning(f"[WorkerManager] 已成功清理 {deleted_count} 個過期任務。")
+        else:
+            logging.info("[WorkerManager] 任務佇列狀態乾淨，無需清理。")
 
     def start_workers(self):
         """
@@ -51,11 +55,12 @@ class WorkerManager:
         """
         self._cleanup_stale_tasks()
 
-        logging.info(f"[WorkerManager] 正在啟動 {self.num_workers} 個 VideoProcessingWorker...")
+        logging.info(f"[WorkerManager] 正在啟動 {self.num_workers} 個 VideoConsumerWorker...")
+        # 更新為新的 worker 模組路徑
         command = [
             sys.executable,
             "-m",
-            "moshousapient.workers.video_processing_worker"
+            "moshousapient.workers.video_consumer_worker"
         ]
 
         for i in range(self.num_workers):
