@@ -1,25 +1,42 @@
-# src/moshousapient/core/rtsp_pipeline.py
+# src/moshousapient/processors/rtsp_processing_pipeline.py
+"""
+定義了 RTSPPipeline 類別，用於代表一個完整的、自給自足的 RTSP 影像處理管線。
+"""
+
+# 1. 標準庫導入
 import logging
 import threading
 import yaml
 from queue import Queue
 from types import SimpleNamespace
 
+# 2. 第三方庫導入
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
 
+# 3. 本專案相對導入
 from ..streams.video_streamer import VideoStreamer
-from ..processors.inference_processor import InferenceProcessor
-from ..processors.event_processor import EventProcessor
-from ..config import Config
+from .inference_processor import InferenceProcessor
+from .rtsp_event_producer import RTSPEventProducer
+from ..configs.behavior_config import Config
 
 
 class RTSPPipeline:
     """
-    代表一個完整的、自給自足的 RTSP 影像處理管線。
+    代表一個完整的 RTSP 影像處理管線。
+
     它負責協調影像流讀取、AI 推論和行為分析等一系列處理器。
     """
+
     def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
+        """
+        初始化 RTSP 處理管線。
+
+        :param camera_config: 包含攝影機特定設定的字典。
+        :param model: 用於物件偵測的 YOLO 模型。
+        :param reid_model: 用於特徵提取的 Re-ID 模型。
+        :param notifier: 用於發送通知的通知器物件。
+        """
         self.config = camera_config
         self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
@@ -43,7 +60,7 @@ class RTSPPipeline:
                 tracker_factory=self._initialize_tracker,
                 name=f"{self.name}-Inference"
             ),
-            EventProcessor(
+            RTSPEventProducer(
                 frame_queue=self.event_queue,
                 shared_state=self.shared_state,
                 state_lock=self.shared_state_lock,
