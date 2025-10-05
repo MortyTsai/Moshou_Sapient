@@ -1,8 +1,8 @@
-# src/moshousapient/settings.py
+# src/moshousapient/configs/settings_config.py
 """
-專案設定模組
+專案設定模組，使用 Pydantic-Settings 實現類型安全的設定管理。
 
-此模組集中管理所有可由使用者調整的應用程式參數。
+此模組集中管理所有可由使用者透過 .env 檔案調整的應用程式參數。
 設定會優先從專案根目錄下的 .env 檔案讀取，若 .env 檔案中未定義，
 則會使用此處指定的預設值。
 """
@@ -15,15 +15,18 @@ from typing import Optional
 # 2. 第三方庫導入
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # 專案根目錄 (MoshouSapient/)，此為系統自動計算路徑，請勿修改。
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Path(__file__) -> .../src/moshousapient/configs/settings_config.py
+# .parent -> .../src/moshousapient/configs/
+# .parent -> .../src/moshousapient/
+# .parent -> .../src/
+# .parent -> .../ (Project Root)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class Settings(BaseSettings):
     """
-    應用程式的核心設定類別。
-    使用 pydantic-settings 實現類型安全的設定管理。
+    應用程式的核心設定類別，定義了所有環境變數及其類型和預設值。
     """
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
