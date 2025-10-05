@@ -1,11 +1,22 @@
-# models.py
+# src/moshousapient/services/database_models.py
+"""
+定義了應用程式的所有 SQLAlchemy 資料庫模型。
+"""
+
+# 1. 標準庫導入
 from __future__ import annotations
 from typing import List
+
+# 2. 第三方庫導入
 from sqlalchemy import DateTime, func, LargeBinary, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from .database import Base
+
+# 3. 本專案相對導入
+from .database_service import Base
+
 
 class Event(Base):
+    """事件記錄模型。"""
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -24,6 +35,7 @@ class Event(Base):
 
 
 class PersonFeature(Base):
+    """人物 Re-ID 特徵模型。"""
     __tablename__ = "person_features"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -37,12 +49,13 @@ class PersonFeature(Base):
 
 
 class Person(Base):
+    """獨立人物模型。"""
     __tablename__ = "persons"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     first_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    last_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
-                                                nullable=False)
+    last_seen: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                onupdate=func.now(), nullable=False)
     sighting_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     events: Mapped[List[Event]] = relationship(back_populates="person")
