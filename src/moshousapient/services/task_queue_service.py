@@ -1,6 +1,7 @@
 # src/moshousapient/services/task_queue_service.py
 """
 此模組提供 TaskQueueService，用於管理基於 SQLite 的持久化任務佇列。
+
 它負責任務的加入、預留、完成和失敗處理，確保任務在各個服務間的可靠傳遞。
 """
 
@@ -13,13 +14,12 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 # 3. 本專案相對導入
-from ..settings import settings
+from ..configs.settings_config import settings
 
 
 class TaskQueueService:
     """
     封裝所有與 SQLite 任務佇列互動的服務類別。
-
     此類別被設計為執行緒安全的，允許多個 Worker 同時存取。
     """
 
@@ -31,6 +31,7 @@ class TaskQueueService:
         """
         self.db_path = db_path
         self.local = threading.local()
+        self.max_retries = 3  # 定義任務最大重試次數
         self._initialize_database()
         logging.info(f"[TaskQueue] 任務佇列服務已初始化，資料庫位於: {self.db_path}")
 
@@ -38,7 +39,9 @@ class TaskQueueService:
         """為當前執行緒獲取或建立一個資料庫連線。"""
         if not hasattr(self.local, 'conn') or self.local.conn is None:
             try:
-                self.local.conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+                self.local.conn = sqlite3.connect(
+                    self.db_path, timeout=10, check_same_thread=False
+                )
                 self.local.conn.execute("PRAGMA journal_mode=WAL;")
                 self.local.conn.row_factory = sqlite3.Row
             except sqlite3.Error as e:
@@ -54,10 +57,11 @@ class TaskQueueService:
             logging.debug("[TaskQueue] 當前執行緒的資料庫連線已關閉。")
 
     def _initialize_database(self):
-        """初始化資料庫，如果任務資料表不存在，則建立它。"""
+        """初始化資料庫，如果任務資料表不存在，則建立它，並處理結構遷移。"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,13 +69,27 @@ class TaskQueueService:
                     status TEXT NOT NULL DEFAULT 'pending',
                     worker_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    reserved_at TIMESTAMP
+                    reserved_at TIMESTAMP,
+                    retry_count INTEGER DEFAULT 0,
+                    last_error TEXT
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON tasks (status);")
+
+            cursor.execute("PRAGMA table_info(tasks)")
+            columns = [row['name'] for row in cursor.fetchall()]
+
+            if 'retry_count' not in columns:
+                logging.info("[TaskQueue] 正在升級資料庫：新增 'retry_count' 欄位...")
+                cursor.execute("ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0")
+
+            if 'last_error' not in columns:
+                logging.info("[TaskQueue] 正在升級資料庫：新增 'last_error' 欄位...")
+                cursor.execute("ALTER TABLE tasks ADD COLUMN last_error TEXT")
+
             conn.commit()
         except sqlite3.Error as e:
-            logging.error(f"[TaskQueue] 初始化資料庫時發生錯誤: {e}", exc_info=True)
+            logging.error(f"[TaskQueue] 初始化或升級資料庫時發生錯誤: {e}", exc_info=True)
             self.close_connection()
             raise
 
@@ -101,6 +119,7 @@ class TaskQueueService:
     def reserve_task(self, worker_id: str) -> Optional[Dict[str, Any]]:
         """
         以原子方式預留一個待處理的任務。
+        此方法會自動忽略狀態為 'failed' 的任務。
 
         :param worker_id: 正在預留此任務的 Worker 的唯一識別碼。
         :return: 一個包含任務資訊的字典 (id, payload)，如果沒有待處理任務則返回 None。
@@ -135,7 +154,6 @@ class TaskQueueService:
                     return task_data
                 else:
                     return None
-
         except sqlite3.Error as e:
             logging.error(f"[TaskQueue] 預留任務時發生錯誤: {e}", exc_info=True)
             return None
@@ -151,41 +169,67 @@ class TaskQueueService:
             with conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-            logging.debug(f"[TaskQueue] 已完成並移除任務 ID: {task_id}")
+                logging.debug(f"[TaskQueue] 已完成並移除任務 ID: {task_id}")
         except sqlite3.Error as e:
             logging.error(f"[TaskQueue] 完成任務 ID {task_id} 時發生錯誤: {e}", exc_info=True)
 
-    def fail_task(self, task_id: int):
+    def fail_task(self, task_id: int, error_message: str = "Unknown error"):
         """
-        標記一個任務失敗，將其狀態重設為 'pending' 以供重試。
+        標記一個任務失敗。會增加其重試計數。如果超過最大重試次數，
+        則將任務狀態標記為 'failed'，不再重試。
 
         :param task_id: 失敗的任務 ID。
+        :param error_message: 導致失敗的錯誤訊息。
         """
         try:
             conn = self._get_connection()
             with conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE tasks SET status = 'pending', worker_id = NULL, reserved_at = NULL WHERE id = ?",
-                    (task_id,)
-                )
-            logging.warning(f"[TaskQueue] 任務 ID {task_id} 處理失敗，已重新排入佇列。")
+                cursor.execute("SELECT retry_count FROM tasks WHERE id = ?", (task_id,))
+                result = cursor.fetchone()
+
+                if result is None:
+                    logging.warning(f"[TaskQueue] 嘗試標記失敗時找不到任務 ID {task_id}。可能已被處理。")
+                    return
+
+                current_retries = result['retry_count']
+
+                if current_retries + 1 >= self.max_retries:
+                    final_error_msg = f"Max retries reached. Last error: {error_message}"
+                    logging.error(
+                        f"[TaskQueue] 任務 ID {task_id} 已達到最大重試次數 ({self.max_retries})。將標記為永久失敗。")
+                    logging.error(f"[TaskQueue] 任務 ID {task_id} 最後一次錯誤: {error_message}")
+                    cursor.execute(
+                        "UPDATE tasks SET status = 'failed', last_error = ? WHERE id = ?",
+                        (final_error_msg, task_id)
+                    )
+                else:
+                    logging.warning(
+                        f"[TaskQueue] 任務 ID {task_id} 處理失敗 (嘗試 {current_retries + 1}/{self.max_retries})，將重新排隊。")
+                    cursor.execute(
+                        """
+                        UPDATE tasks 
+                        SET status = 'pending', worker_id = NULL, reserved_at = NULL, 
+                            retry_count = retry_count + 1, last_error = ?
+                        WHERE id = ?
+                        """,
+                        (error_message, task_id)
+                    )
         except sqlite3.Error as e:
-            logging.error(f"[TaskQueue] 標記任務 ID {task_id} 失敗時發生錯誤: {e}", exc_info=True)
+            logging.error(f"[TaskQueue] 標記任務 ID {task_id} 失敗時發生資料庫錯誤: {e}", exc_info=True)
 
-    def requeue_stale_tasks(self, timeout_seconds: int = 300):
+    def delete_stale_tasks(self, timeout_seconds: int = 600) -> int:
         """
-        查找並重新排入因 Worker 崩潰而卡在 'processing' 狀態的過期任務。
+        查找並刪除因 Worker 崩潰而卡在 'processing' 狀態的過期任務。
 
-        :param timeout_seconds: 任務被視為過期的秒數。預設為 5 分鐘。
+        :param timeout_seconds: 任務被視為過期的秒數。
+        :return: 被刪除的任務數量。
         """
         try:
             conn = self._get_connection()
             with conn:
                 cursor = conn.cursor()
-
                 timeout_point = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
-
                 cursor.execute(
                     "SELECT id, worker_id FROM tasks WHERE status = 'processing' AND reserved_at < ?",
                     (timeout_point,)
@@ -193,21 +237,20 @@ class TaskQueueService:
                 stale_tasks = cursor.fetchall()
 
                 if not stale_tasks:
-                    logging.debug("[TaskQueue] 未發現過期任務。")
-                    return
+                    logging.info("[TaskQueue] 系統啟動檢查：未發現需要清理的過期任務。")
+                    return 0
 
-                task_ids_to_requeue = [task['id'] for task in stale_tasks]
-                logging.warning(f"[TaskQueue] 發現 {len(stale_tasks)} 個過期任務，將它們重新排入佇列。")
+                task_ids_to_delete = [task['id'] for task in stale_tasks]
+                logging.warning(f"[TaskQueue] 發現 {len(stale_tasks)} 個因上次異常關閉而遺留的任務，將其清理。")
                 for task in stale_tasks:
-                    logging.warning(f"  - 任務 ID: {task['id']}, 原 Worker: {task['worker_id']}")
+                    logging.warning(f"  - 正在刪除任務 ID: {task['id']} (原 Worker: {task['worker_id']})")
 
+                placeholders = ','.join('?' for _ in task_ids_to_delete)
                 cursor.execute(
-                    f"""
-                    UPDATE tasks
-                    SET status = 'pending', worker_id = NULL, reserved_at = NULL
-                    WHERE id IN ({','.join('?' for _ in task_ids_to_requeue)})
-                    """,
-                    task_ids_to_requeue
+                    f"DELETE FROM tasks WHERE id IN ({placeholders})",
+                    task_ids_to_delete
                 )
+                return len(task_ids_to_delete)
         except sqlite3.Error as e:
-            logging.error(f"[TaskQueue] 重新排入過期任務時發生錯誤: {e}", exc_info=True)
+            logging.error(f"[TaskQueue] 清理過期任務時發生錯誤: {e}", exc_info=True)
+            return 0
