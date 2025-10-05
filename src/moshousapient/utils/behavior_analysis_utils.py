@@ -1,9 +1,17 @@
-# src/moshousapient/utils/behavior_utils.py
+# src/moshousapient/utils/behavior_analysis_utils.py
+"""
+提供與高階行為分析相關的輔助函式。
+
+這些函式是無狀態的，接收追蹤數據和設定作為輸入，並返回分析結果。
+"""
+# 1. 標準庫導入
 from typing import Dict, Any, List, Tuple, Union, cast
 
+# 2. 第三方庫導入
 import numpy as np
 from shapely.geometry import Point, Polygon, LineString
 
+# 3. 本專案相對導入
 from .geometry_utils import calculate_anchor_points, get_point_side_of_line
 
 
@@ -15,14 +23,13 @@ def analyze_roi_status(tracks: np.ndarray,
                        ) -> Dict[int, bool]:
     """
     根據傳入的 ROI 設定，計算每個追蹤目標是否在感興趣區域內。
-    此函式已解耦，不依賴任何全域 Config 模組。
 
     :param tracks: Ultralytics 追蹤器輸出的 Numpy 陣列。
     :param roi_enabled: ROI 功能是否啟用的布林值。
     :param roi_polygon: 代表 ROI 區域的 Shapely Polygon 物件。
     :param roi_settings: 包含 ROI 特定設定的字典 (如 'anchor_points')。
     :param global_anchor_points: 全域預設的錨點策略。
-    :return: 一個字典，key 為 track_id，value 為布林值（True 表示在 ROI 內）。
+    :return: 一個字典，key 為 track_id，value 為布林值 (True 表示在 ROI 內)。
     """
     if not roi_enabled or not roi_polygon:
         return {}
@@ -60,14 +67,13 @@ def analyze_tripwire_crossings(
 ) -> Tuple[Dict[int, bool], Dict[Tuple[int, int], Point]]:
     """
     根據傳入的 Tripwire 設定，分析每個追蹤目標是否穿越了警戒線。
-    此函式已解耦，不依賴任何全域 Config 模組。
 
     :param tracks: Ultralytics 追蹤器輸出的 Numpy 陣列。
     :param track_last_positions: 一個包含追蹤目標上一次位置的字典。
     :param tripwires_enabled: Tripwire 功能是否啟用的布林值。
     :param tripwire_line_objects: 包含已解析的 Shapely 物件和設定的警戒線列表。
     :param global_anchor_points: 全域預設的錨點策略。
-    :return: 一個元組，包含：
+    :return: 一個元組，包含:
              - crossed_ids: 一個字典，key 為 track_id，value 為 True 表示發生穿越。
              - updated_positions: 更新後的位置字典。
     """
