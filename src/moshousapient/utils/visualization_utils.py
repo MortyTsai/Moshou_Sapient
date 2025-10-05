@@ -59,11 +59,8 @@ def draw_static_overlays(frame: np.ndarray,
             p1_s = tuple((p1 * np.array([scale_x, scale_y])).astype(np.int32))
             p2_s = tuple((p2 * np.array([scale_x, scale_y])).astype(np.int32))
 
-            if direction == "cross_to_right":
+            if direction == "cross_to_right" or direction == "cross_to_left":
                 cv2.arrowedLine(overlay, p1_s, p2_s, (0, 0, 255), tripwire_line_thickness,
-                                tipLength=tripwire_tip_length)
-            elif direction == "cross_to_left":
-                cv2.arrowedLine(overlay, p2_s, p1_s, (0, 0, 255), tripwire_line_thickness,
                                 tipLength=tripwire_tip_length)
             else:  # 'both' or other
                 cv2.line(overlay, p1_s, p2_s, (0, 0, 255), tripwire_line_thickness)

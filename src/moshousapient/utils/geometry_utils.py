@@ -31,9 +31,9 @@ def get_point_side_of_line(p: Point, line_p1: Point, line_p2: Point) -> int:
           (line_p2.y - line_p1.y) * (p.x - line_p1.x)
 
     if val > tolerance:
-        return 1  # 右側
+        return -1  # 右側
     elif val < -tolerance:
-        return -1  # 左側
+        return 1  # 左側
     else:
         return 0  # 在線上
 
