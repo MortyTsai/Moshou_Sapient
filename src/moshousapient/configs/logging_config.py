@@ -1,4 +1,4 @@
-# src/moshousapient/logging_setup.py
+# src/moshousapient/logging_config.py
 """
 此模組提供全域的日誌設定功能。
 """
