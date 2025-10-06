@@ -61,21 +61,17 @@ class Config:
     # --- 行為分析參數 (將從 YAML 載入) ---
     # 錨點系統設定
     ANCHOR_POINTS: Union[str, List[str]] = 'bottom_center'
-
     # ROI 相關設定
     ROI_ENABLED: bool = False
     ROI_SETTINGS: Dict[str, Any] = {}
     ROI_POLYGON_OBJECT: Union[Polygon, None] = None
-
     # Tripwire 相關設定
     TRIPWIRES_ENABLED: bool = False
     TRIPWIRE_SETTINGS: Dict[str, Any] = {}
     TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
-
     # 遮蔽警報設定
     OCCLUSION_ALERT_ENABLED: bool = False
     OCCLUSION_ALERT_SETTINGS: Dict[str, Any] = {}
-
     # 畫面異常警報設定
     SCENE_ANOMALY_ALERT_ENABLED: bool = False
     SCENE_ANOMALY_ALERT_SETTINGS: Dict[str, Any] = {}
@@ -94,25 +90,25 @@ class Config:
             Config.ROI_SETTINGS = behavior_config.get('roi', {})
             if Config.ROI_SETTINGS.get('enabled', False):
                 Config.ROI_ENABLED = True
-                logging.info("[系統] 已成功載入 ROI 設定。")
+                logging.debug("[系統] 已成功載入 ROI 設定。")
 
             # 3. 載入 Tripwire 設定
             Config.TRIPWIRE_SETTINGS = behavior_config.get('tripwires', {})
             if Config.TRIPWIRE_SETTINGS.get('enabled', False):
                 Config.TRIPWIRES_ENABLED = True
-                logging.info("[系統] 已成功載入 Tripwires 設定。")
+                logging.debug("[系統] 已成功載入 Tripwires 設定。")
 
             # 4. 載入遮蔽警報設定
             Config.OCCLUSION_ALERT_SETTINGS = behavior_config.get('occlusion_alerts', {})
             if Config.OCCLUSION_ALERT_SETTINGS.get('enabled', False):
                 Config.OCCLUSION_ALERT_ENABLED = True
-                logging.info("[系統] 已成功載入 Occlusion Alert 設定。")
+                logging.debug("[系統] 已成功載入 Occlusion Alert 設定。")
 
             # 5. 載入畫面異常警報設定
             Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get('scene_anomaly_alerts', {})
             if Config.SCENE_ANOMALY_ALERT_SETTINGS.get('enabled', False):
-                Config.SCENE_ANOMALY_ALERT_ENABLED = True
-                logging.info("[系統] 已成功載入 Scene Anomaly Alert 設定。")
+                Config.SCENE_ANOMALY_ENABLED = True
+                logging.debug("[系統] 已成功載入 Scene Anomaly Alert 設定。")
 
         except FileNotFoundError:
             logging.warning(f"[系統] 找不到行為分析設定檔: {Config.BEHAVIOR_CONFIG_PATH}。將停用所有高階行為分析功能。")
@@ -123,7 +119,7 @@ class Config:
     def _initialize_roi():
         """根據載入的設定，初始化 Shapely Polygon 物件。"""
         if not Config.ROI_ENABLED:
-            logging.info("[系統] ROI 功能未啟用，已跳過初始化。")
+            logging.debug("[系統] ROI 功能未啟用，已跳過初始化。")
             Config.ROI_POLYGON_OBJECT = None
             return
 
@@ -131,12 +127,12 @@ class Config:
         if polygon_points and len(polygon_points) >= 3:
             try:
                 Config.ROI_POLYGON_OBJECT = Polygon(polygon_points)
-                logging.info(f"[系統] 成功建立 ROI 區域，面積: {Config.ROI_POLYGON_OBJECT.area:.2f} 平方像素。")
+                logging.debug(f"[系統] 成功建立 ROI 區域，面積: {Config.ROI_POLYGON_OBJECT.area:.2f} 平方像素。")
             except (ShapelyError, TypeError) as e:
                 logging.warning(f"[系統] 無法建立 ROI 區域，設定的座標點可能無效: {e}。ROI 功能將被停用。")
                 Config.ROI_POLYGON_OBJECT = None
         else:
-            logging.info("[系統] 未設定有效的 ROI 區域或座標點少於 3 個，ROI 功能已停用。")
+            logging.debug("[系統] 未設定有效的 ROI 區域或座標點少於 3 個，ROI 功能已停用。")
             Config.ROI_POLYGON_OBJECT = None
 
     @staticmethod
@@ -144,12 +140,12 @@ class Config:
         """根據載入的設定，初始化所有警戒線 Shapely LineString 物件。"""
         Config.TRIPWIRE_LINE_OBJECTS.clear()
         if not Config.TRIPWIRES_ENABLED:
-            logging.info("[系統] Tripwire 功能未啟用，已跳過初始化。")
+            logging.debug("[系統] Tripwire 功能未啟用，已跳過初始化。")
             return
 
         lines = Config.TRIPWIRE_SETTINGS.get('lines', [])
         if not lines:
-            logging.info("[系統] 未設定任何有效的虛擬警戒線。")
+            logging.debug("[系統] 未設定任何有效的虛擬警戒線。")
             return
 
         for line_config in lines:
@@ -171,13 +167,15 @@ class Config:
                 logging.warning(f"[系統] 無法建立警戒線，設定可能無效: {e}。已跳過該設定: {line_config}")
 
         if Config.TRIPWIRE_LINE_OBJECTS:
-            logging.info(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
+            logging.debug(f"[系統] 成功建立 {len(Config.TRIPWIRE_LINE_OBJECTS)} 條方向性感測警戒線。")
         else:
-            logging.info("[系統] 未設定任何有效的虛擬警戒線。")
+            logging.debug("[系統] 未設定任何有效的虛擬警戒線。")
 
     @staticmethod
     def initialize_static_settings():
-        """執行所有在模組載入時就應完成的靜態設定初始化。"""
+        """
+        執行所有在模組載入時就應完成的靜態設定初始化。
+        """
         Config._load_behavior_config()
         Config._initialize_roi()
         Config._initialize_tripwires()
