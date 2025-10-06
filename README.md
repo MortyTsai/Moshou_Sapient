@@ -1,3 +1,5 @@
+### **MoshouSapient: AI 智慧影像分析平台**
+
 # MoshouSapient: AI 智慧影像分析平台
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
@@ -16,7 +18,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 
 -   **高效能推論與編碼**:
     -   **AI 推論**: 整合 **YOLO** 物件偵測模型與 **NVIDIA TensorRT** 引擎進行加速，實現高速物件偵測與特徵提取。
-    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。針對檔案後處理模式，引入了**記憶體幀池**架構，將影片一次性預讀取至記憶體，實現 I/O 的完全並行化與畫面同步，提升了處理效率。
+    -   **影片編碼**: 利用 **NVENC** 硬體編碼器生成事件影片。
 
 -   **工業級非同步任務佇列架構**:
     -   **生產者-消費者模型**: 系統被解耦為「生產者」（負責即時分析與事件偵測）和「消費者」（負責高負載的影片生成），兩者通過任務佇列進行非同步通信。
@@ -29,7 +31,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
 -   **高階行為分析與動態視覺化**:
     -   **全模式功能對等**: 所有高階行為分析與視覺化功能均**同時支援 RTSP 與 FILE 兩種模式**，確保了行為的一致性。
     -   **區域入侵與停留偵測 (ROI Dwell Time)**: 支援自訂多邊形感興趣區域 (ROI)，能夠偵測目標是否進入特定區域，並在停留時間超過預設閾值時觸發警報。
-    -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向的跨越發生時觸發警報。
+    -   **方向性虛擬警戒線 (Directional Tripwire)**: 支援定義帶有方向的虛擬線段。系統利用向量叉積判斷目標的移動軌跡，僅在符合預設方向的跨越發生時觸-發警報。
     -   **精細化錨點策略 (Granular Anchor Strategy)**: 除了可設定全域錨點外，**每一條** ROI 或 Tripwire 規則都可以獨立覆寫 `anchor_points` 參數。這使得系統能夠在同一個畫面中，為不同形態的目標（如遠處的全身人像與近處的半身人像）應用最合適的判斷基準點，提升了複雜場景下的分析準確性。
     -   **專業級視覺化回饋**: 自動在生成的事件影片中繪製半透明的 ROI 區域、帶方向的警戒線箭頭，並具備以下進階視覺化能力：
         -   **主目標凸顯**: 在多目標場景中，以鮮明色彩**凸顯觸發事件的主要目標**，並將次要目標以半透明灰色弱化顯示，讓影片證據一目了然。
@@ -37,6 +39,12 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
         -   **錨點繪製**: 可在影片中繪製出用於行為判斷的**錨點**，增強了系統的可除錯性與演算法透明度。
 
 -   **事件驅動的持久化**: 系統能在偵測到異常行為時觸發事件，並使用 SQLAlchemy ORM 將事件元數據高效存入 SQLite 資料庫 (WAL 模式)，便於後續查詢與管理。
+
+-   **專業級日誌系統 (Professional Logging System)**:
+    -   **關注點分離**: 系統實現了「使用者日誌」與「開發者日誌」的徹底分離。
+    -   **使用者日誌 (主控台)**: 主控台輸出極度簡潔，只報告使用者關心的關鍵事件與系統狀態，在正常運行時保持靜默，確保了出色的可讀性。
+    -   **開發者日誌 (檔案)**: 所有程序的詳細 `DEBUG` 級日誌，包括第三方套件的輸出，都會被即時、同步地捕獲並寫入 `data/logs/` 下的輪替日誌檔案中，為系統除錯和事後分析提供了完整且可靠的依據。
+    -   **動態級別控制**: 可透過 `.env` 檔案中的 `LOG_LEVEL` 參數，在不修改程式碼的情況下，動態調整主控台的日誌詳細程度。
 
 -   **靈活的影片輸出設定**:
     -   **事件分段**: 內建 `MAX_EVENT_DURATION` 機制，能自動將長時間的連續事件分割成多個較短的影片檔案，便於管理和傳輸。
@@ -74,6 +82,7 @@ MoshouSapient/                                  # 專案根目錄
 │
 ├── data/                                       # 存放專案資料 (執行時生成)
 │   ├── captures/                               # 儲存事件錄影
+│   ├── logs/                                   # 儲存詳細的開發者日誌檔案
 │   ├── security_events.db                      # SQLite 事件資料庫檔案
 │   ├── tasks.db                                # SQLite 任務佇列資料庫檔案
 │   └── video_samples/                          # 存放 FILE 模式的範例影片
@@ -124,6 +133,7 @@ MoshouSapient/                                  # 專案根目錄
         │   ├── __init__.py
         │   ├── behavior_analysis_utils.py      # 行為分析演算法 (ROI, Tripwire)
         │   ├── geometry_utils.py               # 通用幾何計算工具
+        │   ├── logging_utils.py                # 日誌重定向輔助工具
         │   ├── reid_matching_utils.py          # Re-ID 特徵匹配演算法
         │   ├── video_io_utils.py               # 通用影片 I/O 工具
         │   └── visualization_utils.py          # 視覺化繪圖工具
@@ -204,6 +214,10 @@ MoshouSapient/                                  # 專案根目錄
     # --- 系統效能設定 (可選) ---
     # 背景影片處理程序的數量。建議值: 2
     VIDEO_PROCESSING_WORKERS=2
+
+    # --- 日誌系統設定 (可選) ---
+    # 主控台的日誌詳細程度。可選值: "INFO", "DEBUG"
+    LOG_LEVEL="INFO"
     ```
 
 2.  **設定行為分析規則 (重要)**:
@@ -220,6 +234,7 @@ MoshouSapient/                                  # 專案根目錄
     -   觸發事件（例如，讓人物出現在攝影機畫面中，或使用包含人物的影片檔案）。
     -   檢查 `data/captures` 目錄是否生成了帶有完整視覺化標記的事件影片。
     -   檢查 Web 儀表板是否出現新的事件紀錄。
+    -   **(除錯)** 檢查 `data/logs/moshousapient.log` 檔案，確認所有程序的詳細日誌均被正確記錄。
 
 ## 發展藍圖
 
