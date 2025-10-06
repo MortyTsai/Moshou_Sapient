@@ -3,18 +3,15 @@
 定義了 RTSPPipeline 類別，用於代表一個完整的、自給自足的 RTSP 影像處理管線。
 """
 
-# 1. 標準庫導入
 import logging
 import threading
 import yaml
 from queue import Queue
 from types import SimpleNamespace
 
-# 2. 第三方庫導入
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
 
-# 3. 本專案相對導入
 from ..streams.video_streamer import VideoStreamer
 from .inference_processor import InferenceProcessor
 from .rtsp_event_producer import RTSPEventProducer
@@ -24,32 +21,22 @@ from ..configs.behavior_config import Config
 class RTSPPipeline:
     """
     代表一個完整的 RTSP 影像處理管線。
-
     它負責協調影像流讀取、AI 推論和行為分析等一系列處理器。
     """
 
     def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
         """
         初始化 RTSP 處理管線。
-
-        :param camera_config: 包含攝影機特定設定的字典。
-        :param model: 用於物件偵測的 YOLO 模型。
-        :param reid_model: 用於特徵提取的 Re-ID 模型。
-        :param notifier: 用於發送通知的通知器物件。
         """
         self.config = camera_config
         self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
-
         self.shared_state = {'person_detected': False, 'tracked_objects': []}
         self.shared_state_lock = threading.Lock()
-
         self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
-
         self.inference_queue = Queue(maxsize=2)
         buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * Config.TARGET_FPS)
         self.event_queue = Queue(maxsize=buffer_size)
-
         self.processors = [
             InferenceProcessor(
                 frame_queue=self.inference_queue,
@@ -69,10 +56,11 @@ class RTSPPipeline:
                 name=f"{self.name}-Event"
             )
         ]
+        logging.debug(f"[{self.name}] 已初始化。")
 
     def start(self):
         """啟動管線中的所有處理執行緒。"""
-        logging.info(f"[{self.name}] 正在啟動...")
+        logging.debug(f"[{self.name}] 正在啟動...")
         try:
             self.video_streamer.start(self.event_queue, self.inference_queue)
             for processor in self.processors:
@@ -84,12 +72,12 @@ class RTSPPipeline:
 
     def stop(self):
         """安全地停止管線中的所有處理執行緒。"""
-        logging.info(f"[{self.name}] 正在關閉...")
+        logging.debug(f"[{self.name}] 正在關閉...")
         for processor in self.processors:
             processor.stop()
         if self.video_streamer:
             self.video_streamer.stop()
-        logging.info(f"[{self.name}] 已安全關閉。")
+        logging.debug(f"[{self.name}] 已安全關閉。")
 
     def is_alive(self) -> bool:
         """檢查管線的核心影像流是否仍在運行。"""
