@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     HEALTH_CHECK_INTERVAL: int = 15
     VIDEO_PROCESSING_WORKERS: int = 2
 
+    # --- 日誌系統設定 ---
+    LOG_LEVEL: str = "INFO"
+
     # --- 系統自動生成路徑 (請勿手動修改) ---
     DATA_DIR: Path = PROJECT_ROOT / "data"
     CAPTURES_DIR: Path = DATA_DIR / "captures"
