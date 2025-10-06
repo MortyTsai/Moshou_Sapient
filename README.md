@@ -226,6 +226,7 @@ MoshouSapient/                                  # 專案根目錄
 3.  **啟動系統**:
     在專案**根目錄**下，執行以下指令：
     ```bash
+    cd src
     python -m moshousapient
     ```
 
