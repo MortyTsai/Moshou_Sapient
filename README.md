@@ -1,5 +1,3 @@
-### **MoshouSapient: AI 智慧影像分析平台**
-
 # MoshouSapient: AI 智慧影像分析平台
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
@@ -51,7 +49,7 @@ https://github.com/user-attachments/assets/b936d9d3-200b-4672-93c7-38b5cb6e8988
     -   **幀率控制**: 可選擇保留來源影片的原始幀率 (`SOURCE` 模式)，或將輸出影片轉換至指定的目標幀率 (`TARGET` 模式)，以在保真度與檔案大小間取得平衡。
     -   **編碼策略**: 提供「品質」(`QUALITY`) 模式與「均衡」(`BALANCED`) 模式，後者可將影片控制在指定的平均位元率，實現可預測的檔案大小。
 
--   **分層與模組化架構**: 採用標準化的 `src` 專案佈局，並將應用程式邏輯清晰地劃分為 `configs`, `core`, `processors`, `services`, `streams`, `utils`, `workers` 等多個職責明確的子套件，實現了高度的內聚與解耦。
+-   **分層與模組化架構**: 採用標準化的 `src` 專案佈局與 `pyproject.toml` 設定，將專案封裝為一個**可安裝套件**。應用程式邏輯清晰地劃分為 `configs`, `core`, `processors`, `services`, `streams`, `utils`, `workers` 等多個職責明確的子套件，實現了高度的內聚與解耦。
 
 -   **遠端存取與可選通知**:
     -   內建基於 **Flask** 的輕量級 Web 儀表板，用於遠端查看事件紀錄與回放。
@@ -73,6 +71,7 @@ MoshouSapient/                                  # 專案根目錄
 │
 ├── .env.example                                # 環境變數設定檔範本
 ├── .gitignore                                  # Git 版本控制忽略清單
+├── pyproject.toml                              # [新增] 專案建置與結構設定檔
 ├── README.md                                   # 專案說明文件
 ├── requirements.txt                            # Python 依賴套件列表
 │
@@ -169,19 +168,25 @@ MoshouSapient/                                  # 專案根目錄
 
 3.  **設定 Python 虛擬環境**:
     ```bash
+    # 進入專案根目錄
+    cd path/to/MoshouSapient
     # 建立虛擬環境
     python -m venv venv
     # 啟用虛擬環境
     .\venv\Scripts\activate
     ```
 
-4.  **安裝 Python 依賴**:
+4.  **安裝專案與依賴**:
     ```bash
-    # 1. 根據您的 CUDA 版本，從 PyTorch 官網安裝對應的 GPU 版本
-    # 例如 CUDA 12.x:
+    # 1. 將專案本身以「可編輯模式」安裝到虛擬環境中
+    #    這一步會讓 Python 解譯器知道如何找到 moshousapient 模組
+    pip install -e .
+
+    # 2. 根據您的 CUDA 版本，從 PyTorch 官網安裝對應的 GPU 版本
+    #    例如 CUDA 12.x:
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu12x
 
-    # 2. 安裝其餘依賴
+    # 3. 安裝其餘依賴
     pip install -r requirements.txt
     ```
 
@@ -224,9 +229,8 @@ MoshouSapient/                                  # 專案根目錄
     打開 `configs/behavior_analysis.yaml` 檔案，根據您的場景需求，設定感興趣區域 (ROI)、虛擬警戒線 (Tripwire) 以及全域/局部錨點策略。檔案內有詳細的註解說明。**此設定對 RTSP 和 FILE 模式同時生效。**
 
 3.  **啟動系統**:
-    在專案**根目錄**下，執行以下指令：
+    在**啟用虛擬環境**後，您可以在專案的**任何目錄**下，執行以下指令：
     ```bash
-    cd src
     python -m moshousapient
     ```
 
