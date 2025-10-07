@@ -29,13 +29,13 @@ src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from moshousapient.services.task_queue_service import TaskQueueService
-from moshousapient.services.notification_service import NotificationService
-from moshousapient.services.database_service import SessionLocal
-from moshousapient.services.database_models import Event
-from moshousapient.configs.settings_config import settings
-from moshousapient.configs.logging_config import configure_logging_for_queue
-from moshousapient.configs.behavior_config import Config
+from ..services.task_queue_service import TaskQueueService
+from ..services.notification_service import NotificationService
+from ..services.database_service import SessionLocal
+from ..services.database_models import Event
+from ..configs.settings_config import settings
+from ..configs.logging_config import configure_logging_for_queue
+from ..configs.behavior_config import Config
 
 
 class VideoConsumerWorker:
@@ -73,7 +73,7 @@ class VideoConsumerWorker:
 
     def _load_file_mode_frames(self, frames_metadata: List[Dict], video_path: str) -> List[Dict]:
         """為 FILE 模式的任務，從源影片中讀取實際的幀圖像數據。"""
-        from moshousapient.utils.video_io_utils import ThreadedVideoCapture
+        from ..utils.video_io_utils import ThreadedVideoCapture
         logging.debug(f"[Worker-{self.worker_id}] 正在為 FILE 模式預讀取源影片: {os.path.basename(video_path)}")
         cap = ThreadedVideoCapture(video_path)
         if not cap.is_opened():
@@ -192,7 +192,7 @@ class VideoConsumerWorker:
     def _encode_segment(self, segment_frames: List[Dict], output_path: str, event_type: str,
                         source_meta: Dict, rendering_config: Dict) -> Tuple[bool, Optional[str]]:
         """對單個事件分段進行繪製和編碼。"""
-        from moshousapient.utils.visualization_utils import draw_static_overlays, draw_dynamic_overlays, draw_info_panel
+        from ..utils.visualization_utils import draw_static_overlays, draw_dynamic_overlays, draw_info_panel
         if not segment_frames:
             return True, None
 
