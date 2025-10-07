@@ -21,8 +21,8 @@ __pycache__/
 # --- 執行時產生的資料 (資料庫、錄影等) ---
 data/
 !data/video_samples/
-data/video_samples/*.mp4
-# 開箱即測的檔案
+data/video_samples/*
+!data/video_samples/input.mp4
 !data/video_samples/small_test.mp4
 
 # --- IDE/編輯器設定檔 ---
@@ -33,3 +33,8 @@ data/video_samples/*.mp4
 # --- AI 模型引擎 ---
 *.engine
 *.onnx
+
+# --- Python 套件建置與安裝產物 ---
+build/
+dist/
+*.egg-info/
