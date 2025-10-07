@@ -28,9 +28,9 @@ src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from moshousapient.configs.settings_config import settings
-from moshousapient.utils.geometry_utils import calculate_anchor_points
-from moshousapient.utils.behavior_analysis_utils import analyze_roi_status, analyze_tripwire_crossings
+from ..configs.settings_config import settings
+from ..utils.geometry_utils import calculate_anchor_points
+from ..utils.behavior_analysis_utils import analyze_roi_status, analyze_tripwire_crossings
 
 
 class BehaviorConfig:
