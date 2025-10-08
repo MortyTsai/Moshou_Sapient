@@ -1,28 +1,33 @@
 # src/moshousapient/processors/rtsp_event_producer.py
 """
 定義了 RTSPEventProducer，一個作為生產者的處理器。
-[V2.1 架構] 它負責處理高階行為分析 (如 ROI、Tripwire) 和事件生命週期管理，
+
+它負責處理高階行為分析 (如 ROI、Tripwire) 和事件生命週期管理，
 並將一個完整的、連續的活動打包成單一任務，發送到任務佇列。
 """
 
+# 1. 標準庫導入
 import logging
-import time
+import os
 import pickle
 import tempfile
-import os
+import time
 from collections import deque
 from queue import Empty, Queue
 from threading import Lock
-from typing import Union, Dict, cast, Tuple, Any
+from typing import Any, Dict, Tuple, Union, cast
 
+# 2. 第三方庫導入
 import numpy as np
 from shapely.geometry import Point
 
-from .base_processor import BaseProcessor
+# 3. 本專案相對導入
 from ..configs.behavior_config import Config
 from ..services.task_queue_service import TaskQueueService
+from ..utils.behavior_analysis_utils import (analyze_roi_status,
+                                             analyze_tripwire_crossings)
 from ..utils.geometry_utils import calculate_anchor_points
-from ..utils.behavior_analysis_utils import analyze_roi_status, analyze_tripwire_crossings
+from .base_processor import BaseProcessor
 
 behavior_logger = logging.getLogger("BehaviorAnalysis")
 
@@ -30,11 +35,11 @@ behavior_logger = logging.getLogger("BehaviorAnalysis")
 class RTSPEventProducer(BaseProcessor):
     """
     負責處理高階行為分析和事件生命週期管理的處理器。
-    它作為一個生產者，將偵測到的事件打包成任務並發送到 TaskQueueService。
     """
 
     def __init__(self, frame_queue: Queue, shared_state: dict, state_lock: Lock,
-                 notifier, target_fps: float, name: str = "RTSPEventProducer"):
+                 notifier: Any, target_fps: float, rtsp_event_active_flag: Any,  # !! 修正: 使用 Any
+                 name: str = "RTSPEventProducer"):
         """
         初始化 RTSPEventProducer。
         """
@@ -45,6 +50,7 @@ class RTSPEventProducer(BaseProcessor):
         self.notifier = notifier
         self.target_fps = target_fps
         self.task_queue = TaskQueueService()
+        self.rtsp_event_active_flag = rtsp_event_active_flag
 
         buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * target_fps)
         self.frame_buffer = deque(maxlen=buffer_size)
@@ -64,6 +70,38 @@ class RTSPEventProducer(BaseProcessor):
         self.min_frame_interval = 1.0 / self.target_fps if Config.VIDEO_FPS_MODE == "TARGET" and self.target_fps > 0 else 0
         logging.debug(f"[{self.name}] 初始化完成。")
 
+    def _start_event(self, current_time: float):
+        """開始一個新的事件錄製。"""
+        self.is_capturing_event = True
+        self.event_start_time = current_time
+        self.current_event_type = "person_detected"
+        self.event_recording_frames = list(self.frame_buffer)
+
+        # !! 核心修改: 設定事件活躍標誌
+        self.rtsp_event_active_flag.value = True
+
+        logging.info(f"偵測到事件 '{self.current_event_type}'! 開始錄製...")
+
+    def _end_event(self, current_time: float, reason: str):
+        """結束當前事件錄製，並將完整的事件打包發送到佇列。"""
+        logging.debug(f"事件結束 ({reason})。")
+        if self.event_recording_frames:
+            self._dispatch_video_task()
+
+        self.last_event_end_time = current_time
+        self.is_capturing_event = False
+        self.current_event_type = None
+        self.event_recording_frames.clear()
+        self.dwell_time_trackers.clear()
+        self.tripwire_alert_ids.clear()
+        self.track_last_positions.clear()
+
+        # !! 核心修改: 清除事件活躍標誌
+        self.rtsp_event_active_flag.value = False
+
+    # ... (其餘所有方法 _target_func, _prepare_frame_data, _update_event_state,
+    #      _dispatch_video_task, _set_event_type, _handle_dwell_logic, _handle_tripwire_logic
+    #      保持不變) ...
     def _target_func(self):
         """主處理迴圈，持續從佇列中獲取幀並進行行為分析。"""
         logging.debug(f"[{self.name}] 處理器已啟動。")
@@ -94,12 +132,14 @@ class RTSPEventProducer(BaseProcessor):
                     current_tracks = np.empty((0, 8))
 
                 track_roi_status_now = analyze_roi_status(
-                    tracks=current_tracks, roi_enabled=Config.ROI_ENABLED, roi_polygon=Config.ROI_POLYGON_OBJECT,
+                    tracks=current_tracks, roi_enabled=Config.ROI_ENABLED,
+                    roi_polygon=Config.ROI_POLYGON_OBJECT,
                     roi_settings=Config.ROI_SETTINGS, global_anchor_points=Config.ANCHOR_POINTS
                 )
                 crossed_ids_map, self.track_last_positions = analyze_tripwire_crossings(
                     tracks=current_tracks, track_last_positions=self.track_last_positions,
-                    tripwires_enabled=Config.TRIPWIRES_ENABLED, tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
+                    tripwires_enabled=Config.TRIPWIRES_ENABLED,
+                    tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
                     global_anchor_points=Config.ANCHOR_POINTS
                 )
 
@@ -121,6 +161,11 @@ class RTSPEventProducer(BaseProcessor):
 
         if self.is_capturing_event and self.event_recording_frames:
             self._end_event(time.time(), "系統關閉")
+
+        # 確保在退出時標誌被清除
+        if self.rtsp_event_active_flag.value:
+            self.rtsp_event_active_flag.value = False
+
         logging.debug(f"[{self.name}] 處理器已停止。")
 
     def _prepare_frame_data(self, item: dict, current_tracks: np.ndarray,
@@ -131,6 +176,7 @@ class RTSPEventProducer(BaseProcessor):
         for track in current_tracks:
             track_id = int(track[4])
             bbox = track[:4]
+
             vis_anchor_strategy = Config.ANCHOR_POINTS
             if track_id in alert_ids_snapshot:
                 for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
@@ -142,14 +188,17 @@ class RTSPEventProducer(BaseProcessor):
             bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
             anchors = calculate_anchor_points(bbox_tuple, vis_anchor_strategy)
             anchor_coords = [list(anchor.coords)[0] for anchor in anchors if isinstance(anchor, Point)]
+
             is_in_roi = track_roi_status.get(track_id, False)
             has_crossed = track_id in alert_ids_snapshot
+
             tracks_with_anchors.append({
                 'box_xyxy': bbox.tolist(), 'track_id': track_id,
                 'confidence': track[5] if len(track) > 5 else None,
                 'anchors': anchor_coords, 'is_in_roi': is_in_roi,
                 'has_crossed_tripwire': has_crossed
             })
+
         return {
             'frame': item['frame'], 'time': item['time'],
             'tracks': tracks_with_anchors,
@@ -164,36 +213,14 @@ class RTSPEventProducer(BaseProcessor):
             post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
             if not person_detected_now and post_event_elapsed:
                 self._end_event(current_time, "人物消失")
-        else:
-            self.frame_buffer.append(frame_data)
+            else:
+                self.frame_buffer.append(frame_data)
 
         if person_detected_now:
             self.last_person_seen_time = current_time
             is_in_cooldown = (current_time - self.last_event_end_time) <= Config.COOLDOWN_PERIOD
             if not self.is_capturing_event and not is_in_cooldown:
                 self._start_event(current_time)
-
-    def _start_event(self, current_time: float):
-        """開始一個新的事件錄製。"""
-        self.is_capturing_event = True
-        self.event_start_time = current_time
-        self.current_event_type = "person_detected"
-        self.event_recording_frames = list(self.frame_buffer)
-        logging.info(f"偵測到事件 '{self.current_event_type}'! 開始錄製...")
-
-    def _end_event(self, current_time: float, reason: str):
-        """結束當前事件錄製，並將完整的事件打包發送到佇列。"""
-        logging.debug(f"事件結束 ({reason})。")
-        if self.event_recording_frames:
-            self._dispatch_video_task()
-
-        self.last_event_end_time = current_time
-        self.is_capturing_event = False
-        self.current_event_type = None
-        self.event_recording_frames.clear()
-        self.dwell_time_trackers.clear()
-        self.tripwire_alert_ids.clear()
-        self.track_last_positions.clear()
 
     def _dispatch_video_task(self):
         """將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。"""
@@ -230,7 +257,7 @@ class RTSPEventProducer(BaseProcessor):
         if new_priority > current_priority:
             if self.is_capturing_event:
                 logging.info(f"事件升級: '{self.current_event_type}' -> '{new_type}'")
-                self.current_event_type = new_type
+            self.current_event_type = new_type
 
     def _handle_dwell_logic(self, track_roi_status: Dict[int, bool], current_time: float):
         """處理所有與 ROI 區域停留相關的邏輯。"""
@@ -253,9 +280,8 @@ class RTSPEventProducer(BaseProcessor):
                             )
                             self._set_event_type("dwell_alert")
                             tracker_info['alerted'] = True
-            else:
-                if track_id in self.dwell_time_trackers:
-                    del self.dwell_time_trackers[track_id]
+            elif track_id in self.dwell_time_trackers:
+                del self.dwell_time_trackers[track_id]
 
         disappeared_ids = set(self.dwell_time_trackers.keys()) - current_tracked_ids
         for track_id in disappeared_ids:

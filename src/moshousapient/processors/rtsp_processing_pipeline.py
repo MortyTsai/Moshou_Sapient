@@ -3,15 +3,19 @@
 定義了 RTSPPipeline 類別，用於代表一個完整的、自給自足的 RTSP 影像處理管線。
 """
 
+# 1. 標準庫導入
 import logging
 import threading
 import yaml
 from queue import Queue
 from types import SimpleNamespace
+from typing import Any
 
+# 2. 第三方庫導入
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
 
+# 3. 本專案相對導入
 from ..streams.video_streamer import VideoStreamer
 from .inference_processor import InferenceProcessor
 from .rtsp_event_producer import RTSPEventProducer
@@ -21,22 +25,32 @@ from ..configs.behavior_config import Config
 class RTSPPipeline:
     """
     代表一個完整的 RTSP 影像處理管線。
+
     它負責協調影像流讀取、AI 推論和行為分析等一系列處理器。
     """
 
-    def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier=None):
+    def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier: Any,
+                 rtsp_event_active_flag: Any):
         """
         初始化 RTSP 處理管線。
+
+        :param camera_config: 攝影機的設定字典。
+        :param model: 用於物件偵測的 YOLO 模型。
+        :param reid_model: 用於特徵提取的 Re-ID 模型。
+        :param notifier: 用於發送通知的服務實例。
+        :param rtsp_event_active_flag: 跨程序共享的事件活躍標誌。
         """
         self.config = camera_config
         self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
         self.shared_state = {'person_detected': False, 'tracked_objects': []}
         self.shared_state_lock = threading.Lock()
+
         self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
         self.inference_queue = Queue(maxsize=2)
         buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * Config.TARGET_FPS)
         self.event_queue = Queue(maxsize=buffer_size)
+
         self.processors = [
             InferenceProcessor(
                 frame_queue=self.inference_queue,
@@ -53,6 +67,7 @@ class RTSPPipeline:
                 state_lock=self.shared_state_lock,
                 notifier=self.notifier,
                 target_fps=Config.TARGET_FPS,
+                rtsp_event_active_flag=rtsp_event_active_flag,  # 將標誌傳遞下去
                 name=f"{self.name}-Event"
             )
         ]
