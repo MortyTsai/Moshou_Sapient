@@ -1,41 +1,44 @@
 # src/moshousapient/workers/video_consumer_worker.py
 """
-定義了 VideoConsumerWorker，一個獨立的背景工作程序 (消費者)。
-此 Worker 現在是事件處理的統一中心。它負責：
-1. 從任務佇列獲取包含事件元數據的任務。
-2. 根據需要從源影片加載實際幀數據 (FILE 模式)。
-3. 將可能很長的事件幀列表，根據 MAX_EVENT_DURATION 切分成標準時長的「子事件」。
-4. 為每個子事件生成影片檔名和視覺化配置。
-5. 對每個子事件的幀進行繪製和編碼，生成最終的 .mp4 影片。
+一個獨立的背景工作程序 (消費者)，負責處理影片編碼任務。
+
+此 Worker 是事件處理的統一中心，負責從佇列獲取任務，並統一執行
+事件分段、視覺化配置生成、幀抽樣、繪圖與編碼。
 """
 
+# 1. 標準庫導入
 import logging
-import signal
-import time
-import pickle
 import os
-import sys
+import pickle
+import signal
 import subprocess
 import threading
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
+# 2. 第三方庫導入
 import cv2
 import numpy as np
 
+# 確保在作為獨立腳本執行時能找到 moshousapient 模組
 project_root = Path(__file__).resolve().parent.parent.parent.parent
 src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from ..services.task_queue_service import TaskQueueService
-from ..services.notification_service import NotificationService
-from ..services.database_service import SessionLocal
-from ..services.database_models import Event
-from ..configs.settings_config import settings
-from ..configs.logging_config import configure_logging_for_queue
-from ..configs.behavior_config import Config
+# 3. 本專案相對導入
+from moshousapient.services.task_queue_service import TaskQueueService
+from moshousapient.services.notification_service import NotificationService
+from moshousapient.services.database_service import SessionLocal
+from moshousapient.services.database_models import Event
+from moshousapient.configs.settings_config import settings
+from moshousapient.configs.logging_config import configure_logging_for_queue
+from moshousapient.configs.behavior_config import Config
+from moshousapient.utils.video_io_utils import ThreadedVideoCapture
+from moshousapient.utils.visualization_utils import draw_static_overlays, draw_dynamic_overlays, draw_info_panel
 
 
 class VideoConsumerWorker:
@@ -53,7 +56,6 @@ class VideoConsumerWorker:
         self.task_queue = TaskQueueService()
         self.stop_event = threading.Event()
         self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'windows'
-
         self.notifier: Optional[NotificationService] = None
         if Config.DISCORD_ENABLED:
             if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
@@ -63,7 +65,6 @@ class VideoConsumerWorker:
                 )
             else:
                 logging.warning(f"[Worker-{self.worker_id}] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
-
         logging.debug(f"[Worker-{self.worker_id}] 初始化完成。")
 
     def _handle_shutdown_signal(self, signum, _frame):
@@ -73,7 +74,6 @@ class VideoConsumerWorker:
 
     def _load_file_mode_frames(self, frames_metadata: List[Dict], video_path: str) -> List[Dict]:
         """為 FILE 模式的任務，從源影片中讀取實際的幀圖像數據。"""
-        from ..utils.video_io_utils import ThreadedVideoCapture
         logging.debug(f"[Worker-{self.worker_id}] 正在為 FILE 模式預讀取源影片: {os.path.basename(video_path)}")
         cap = ThreadedVideoCapture(video_path)
         if not cap.is_opened():
@@ -166,7 +166,8 @@ class VideoConsumerWorker:
             }
 
             for i, segment_frames in enumerate(event_segments):
-                now = datetime.fromtimestamp(segment_frames[0]['time']) if 'time' in segment_frames[0] else datetime.now()
+                now = datetime.fromtimestamp(segment_frames[0]['time']) if 'time' in segment_frames[
+                    0] else datetime.now()
                 segment_suffix = f"_seg{i + 1}" if len(event_segments) > 1 else ""
                 filename = f"{event_type}_{now.strftime('%Y%m%d_%H%M%S')}{segment_suffix}.mp4"
                 output_path = os.path.join(settings.CAPTURES_DIR, filename)
@@ -191,8 +192,7 @@ class VideoConsumerWorker:
 
     def _encode_segment(self, segment_frames: List[Dict], output_path: str, event_type: str,
                         source_meta: Dict, rendering_config: Dict) -> Tuple[bool, Optional[str]]:
-        """對單個事件分段進行繪製和編碼。"""
-        from ..utils.visualization_utils import draw_static_overlays, draw_dynamic_overlays, draw_info_panel
+        """對單個事件分段進行繪圖和編碼。"""
         if not segment_frames:
             return True, None
 
@@ -205,13 +205,6 @@ class VideoConsumerWorker:
 
         output_fps = settings.TARGET_FPS if settings.VIDEO_FPS_MODE == "TARGET" and settings.TARGET_FPS > 0 else source_fps
 
-        if settings.VIDEO_FPS_MODE == "TARGET" and source_fps > 0:
-            target_duration = len(segment_frames) / source_fps
-            target_total_frames = int(target_duration * output_fps)
-            if len(segment_frames) > target_total_frames > 0:
-                indices = np.linspace(0, len(segment_frames) - 1, target_total_frames, dtype=int)
-                segment_frames = [segment_frames[i] for i in indices]
-
         ffmpeg_cmd = [
             'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
             '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{source_width}x{source_height}',
@@ -220,22 +213,18 @@ class VideoConsumerWorker:
             '-r', str(output_fps),
             '-c:v', 'hevc_nvenc', '-preset', 'p6', '-an'
         ]
-
         if settings.VIDEO_ENCODING_MODE == "BALANCED":
             bitrate_str = f"{settings.TARGET_BITRATE_MBPS}M"
             ffmpeg_cmd.extend(['-rc', 'cbr', '-b:v', bitrate_str, '-maxrate', bitrate_str])
         else:
             quality_level = '23'
             ffmpeg_cmd.extend(['-rc', 'vbr', '-cq', quality_level, '-b:v', '0', '-maxrate', '20M'])
-
         ffmpeg_cmd.extend(['-pix_fmt', 'yuv420p', output_path])
 
         process = None
         try:
             logging.debug(
-                f"[Worker-{self.worker_id}] 開始為事件 '{event_type}' 的分段編碼 "
-                f"{len(segment_frames)} 幀 (輸出 FPS: {output_fps})..."
-            )
+                f"[Worker-{self.worker_id}] 開始為事件 '{event_type}' 的分段編碼 {len(segment_frames)} 幀 (輸出 FPS: {output_fps})...")
             process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
             static_overlay = np.zeros((source_height, source_width, 3), dtype=np.uint8)
@@ -249,12 +238,16 @@ class VideoConsumerWorker:
             for i, frame_data in enumerate(segment_frames):
                 frame = frame_data['frame']
                 overlay = cv2.add(frame, static_overlay)
+
                 all_tracks = frame_data.get('tracks', [])
                 active_alert_ids = {t['track_id'] for t in all_tracks if t.get('has_crossed_tripwire')}
                 active_roi_ids = {t['track_id'] for t in all_tracks if t.get('is_in_roi')}
+
                 overlay = draw_dynamic_overlays(overlay, all_tracks, active_alert_ids, active_roi_ids, scale_x, scale_y)
+
                 elapsed_time = i / output_fps
                 final_frame = draw_info_panel(overlay, event_type, elapsed_time)
+
                 if process.stdin:
                     process.stdin.write(final_frame.tobytes())
 
@@ -293,7 +286,6 @@ class VideoConsumerWorker:
                 if db: db.close()
 
             return True, None
-
         except (IOError, BrokenPipeError) as e:
             return False, f"FFmpeg 管道寫入時發生錯誤: {e}"
         except subprocess.TimeoutExpired:
@@ -305,12 +297,11 @@ class VideoConsumerWorker:
                 process.kill()
 
     def run(self):
-        """ Worker 的主執行迴圈。 """
+        """Worker 的主執行迴圈。"""
         signal.signal(signal.SIGINT, self._handle_shutdown_signal)
         signal.signal(signal.SIGTERM, self._handle_shutdown_signal)
 
         logging.debug(f"[Worker-{self.worker_id}] 在主機 {self.hostname} 上開始監聽任務...")
-
         if self.notifier:
             self.notifier.start()
             time.sleep(5)
@@ -322,6 +313,24 @@ class VideoConsumerWorker:
                     task = self.task_queue.reserve_task(self.worker_id)
                     if task:
                         logging.debug(f"[Worker-{self.worker_id}] 已獲取任務 ID: {task['id']}")
+
+                        is_requeued = False
+                        try:
+                            payload = pickle.loads(task['payload'])
+                            if payload.get('task_type') == 'file_inference':
+                                logging.debug(
+                                    f"[Worker-{self.worker_id}] 任務 ID: {task['id']} 是 'file_inference' 類型，將其釋放給 Scheduler。")
+                                self.task_queue.fail_task(task['id'], "Requeued for Scheduler", requeue=True)
+                                is_requeued = True
+                        except Exception:
+                            # 如果 payload 無法解析或沒有 'task_type'，則假定為舊格式的影片編碼任務
+                            pass
+
+                        if is_requeued:
+                            # 釋放任務後，短暫休眠以避免熱循環，給 Scheduler 留出反應時間
+                            time.sleep(3)
+                            continue
+
                         success, error_message = self._process_video_task(task['payload'])
                         if success:
                             self.task_queue.complete_task(task['id'])
@@ -330,12 +339,12 @@ class VideoConsumerWorker:
                             logging.warning(f"[Worker-{self.worker_id}] 任務 ID: {task['id']} 處理失敗。")
                             self.task_queue.fail_task(task['id'], final_error_msg)
                     else:
+                        # 如果沒有任務，短暫休眠
                         time.sleep(2)
                 except Exception as e:
                     logging.error(f"[Worker-{self.worker_id}] 在處理任務時發生未預期的錯誤: {e}", exc_info=True)
                     if task and 'id' in task:
-                        error_msg = f"Unhandled exception in worker loop: {e}"
-                        self.task_queue.fail_task(task['id'], error_msg)
+                        self.task_queue.fail_task(task['id'], f"Unhandled exception: {e}")
                     time.sleep(5)
         finally:
             if self.notifier:
