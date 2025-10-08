@@ -2,8 +2,8 @@
 """
 中央設定模組，用於統一管理所有參數與應用程式的啟動邏輯。
 
-此模組從 settings_config 模組讀取原始設定值，並從 YAML 檔案載入複雜的行為分析規則，
-最後執行應用程式啟動時的初始化邏輯。
+此模組從 settings_config 模組讀取原始設定值，並從 YAML 檔案載入複雜的
+行為分析規則，最後執行應用程式啟動時的初始化邏輯。
 """
 
 # 1. 標準庫導入
@@ -25,7 +25,6 @@ class Config:
     """
     # --- 從 settings 模組讀取靜態設定 ---
     VIDEO_SOURCE_TYPE: str = settings.VIDEO_SOURCE_TYPE.upper()
-    VIDEO_FILE_PATH: str = settings.VIDEO_FILE_PATH
     RTSP_URL: str = settings.RTSP_URL
     RTSP_TRANSPORT_PROTOCOL: str = settings.RTSP_TRANSPORT_PROTOCOL.upper()
     DISCORD_ENABLED: bool = settings.DISCORD_ENABLED
@@ -107,7 +106,7 @@ class Config:
             # 5. 載入畫面異常警報設定
             Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get('scene_anomaly_alerts', {})
             if Config.SCENE_ANOMALY_ALERT_SETTINGS.get('enabled', False):
-                Config.SCENE_ANOMALY_ENABLED = True
+                Config.SCENE_ANOMALY_ALERT_ENABLED = True
                 logging.debug("[系統] 已成功載入 Scene Anomaly Alert 設定。")
 
         except FileNotFoundError:
