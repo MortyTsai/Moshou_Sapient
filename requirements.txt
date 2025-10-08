@@ -18,6 +18,8 @@ numpy>=1.24.0
 PyYAML>=6.0
 # 用於類型安全的設定管理
 pydantic-settings>=2.0.0
+# 用於監控檔案系統事件
+watchdog>=2.0.0
 
 # --- 資料庫 ---
 # ORM 與資料庫工具
