@@ -1,28 +1,34 @@
 # src/moshousapient/core/app_orchestrator.py
 """
 MoshouSapient 應用程式的主入口點與協調器。
+
 負責初始化所有組件、根據設定選擇執行策略，並管理應用程式的生命週期。
 """
 
+# 1. 標準庫導入
 import logging
+import multiprocessing as mp
 import sys
 import threading
-from pathlib import Path
-from typing import Optional, Dict, Any
-import multiprocessing as mp
+import time
+from typing import Any, Dict, Optional
 
+# 2. 第三方庫導入
 import torch
 
+# 3. 本專案相對導入
 from ..configs.behavior_config import Config
 from ..configs.logging_config import configure_logging_for_queue, setup_logging_listener
-from ..configs.settings_config import settings, PROJECT_ROOT
+from ..configs.settings_config import settings
 from ..services.database_service import init_db
+from ..services.ingestion_service import IngestionService
 from ..services.notification_service import NotificationService
-from ..web.app import create_flask_app
-from ..utils.video_io_utils import get_video_resolution
+from ..services.task_queue_service import TaskQueueService
 from ..utils.logging_utils import StreamToLogger
 from ..processors.rtsp_processing_pipeline import RTSPPipeline
-from .producer_runners import RTSPProducerRunner, FileProducerRunner, BaseRunner
+from ..web.app import create_flask_app
+from .producer_runners import BaseRunner, RTSPProducerRunner
+from .scheduler import Scheduler
 from .worker_manager import WorkerManager
 
 
@@ -40,8 +46,6 @@ def pre_flight_checks() -> bool:
             logging.critical("-" * 60)
             return False
         logging.debug(f"[系統] CUDA 設備檢查通過。偵測到 GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        logging.debug("[系統] 在 FILE 模式下，跳過 CUDA 設備檢查。")
     return True
 
 
@@ -85,29 +89,48 @@ def main():
 
     init_db()
 
+    # 創建一個跨程序共享的布林標誌，用於指示 RTSP 事件是否正在活躍處理中
+    rtsp_event_active_flag = mp.Value('b', False)
+
     notifier: Optional[NotificationService] = None
     if Config.DISCORD_ENABLED:
         if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
-            notifier = NotificationService(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
+            notifier = NotificationService(token=Config.DISCORD_TOKEN,
+                                           channel_id=Config.DISCORD_CHANNEL_ID)
             notifier.start()
         else:
             logging.warning("[系統] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
-    else:
-        logging.debug("[系統] Discord 通知功能已被禁用。")
+
+    ingestion_service: Optional[IngestionService] = None
+    if settings.INGESTION_ENABLED:
+        logging.debug("[系統] 檔案攝取服務已啟用，正在初始化...")
+        task_queue_for_ingestion = TaskQueueService()
+        ingestion_service = IngestionService(
+            watch_directory=settings.INGESTION_WATCH_DIR,
+            task_queue=task_queue_for_ingestion
+        )
+        ingestion_service.start()
+
+    scheduler: Optional[Scheduler] = None
+    if settings.SCHEDULER_ENABLED:
+        logging.debug("[系統] 智慧排程器已啟用，正在初始化...")
+        task_queue_for_scheduler = TaskQueueService()
+        # 將共享標誌傳遞給 Scheduler
+        scheduler = Scheduler(
+            task_queue=task_queue_for_scheduler,
+            rtsp_event_active_flag=rtsp_event_active_flag
+        )
+        scheduler.start()
 
     logging.debug("[系統] 正在背景啟動 Web 儀表板...")
     flask_app = create_flask_app()
+
     def run_flask_silently():
-        """在一個靜默的環境中運行 Flask 應用，並將其輸出重定向到日誌系統。"""
         flask_logger = logging.getLogger("flask_server")
         with StreamToLogger(flask_logger, logging.DEBUG):
             flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
-    web_thread = threading.Thread(
-        target=run_flask_silently,
-        daemon=True,
-        name="WebDashboardThread"
-    )
+    web_thread = threading.Thread(target=run_flask_silently, daemon=True, name="WebDashboardThread")
     web_thread.start()
 
     runner: Optional[BaseRunner] = None
@@ -131,40 +154,21 @@ def main():
                 if notifier: notifier.stop()
                 sys.exit(1)
 
-            pipelines = [RTSPPipeline(camera_config, model, reid_model, notifier)]
+            # 將共享標誌傳遞給 RTSP 處理管線
+            pipelines = [RTSPPipeline(
+                camera_config=camera_config,
+                model=model,
+                reid_model=reid_model,
+                notifier=notifier,
+                rtsp_event_active_flag=rtsp_event_active_flag
+            )]
             runner = RTSPProducerRunner(pipelines, notifier)
         except Exception as e:
             logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
             if notifier: notifier.stop()
             sys.exit(1)
-
-    elif Config.VIDEO_SOURCE_TYPE == "FILE":
-        video_path_str = Config.VIDEO_FILE_PATH
-        if not video_path_str:
-            logging.error("[系統] 檔案模式已啟用，但未提供 VIDEO_FILE_PATH。")
-        else:
-            video_path = Path(video_path_str)
-            if not video_path.is_absolute():
-                video_path = PROJECT_ROOT / video_path
-
-            if video_path.exists():
-                resolution = get_video_resolution(str(video_path))
-                if resolution:
-                    Config.ENCODE_WIDTH, Config.ENCODE_HEIGHT = resolution
-                    logging.debug(f"[系統] 已動態更新影像尺寸為: {resolution[0]}x{resolution[1]}")
-                else:
-                    logging.error("[系統] 無法獲取影片解析度，將使用預設值。")
-            else:
-                logging.error(f"[系統] 未找到有效的影片檔案: {video_path}。")
-        runner = FileProducerRunner(workers=[], notifier=notifier)
-
     else:
-        logging.critical(
-            f"[嚴重錯誤] 無效的 VIDEO_SOURCE_TYPE: '{Config.VIDEO_SOURCE_TYPE}'。"
-            f"請在 .env 中設定為 'RTSP' 或 'FILE'。"
-        )
-        if notifier: notifier.stop()
-        sys.exit(1)
+        logging.info("[系統] 未設定 RTSP 模式。系統將在閒置模式下運行，僅監聽背景服務。")
 
     worker_manager = WorkerManager(
         num_workers=settings.VIDEO_PROCESSING_WORKERS,
@@ -174,11 +178,13 @@ def main():
     logging.info(f"MoshouSapient 系統啟動完成，Web 儀表板位於 http://127.0.0.1:5000")
 
     try:
+        worker_manager.start_workers()
         if runner:
-            worker_manager.start_workers()
             runner.run()
         else:
-            logging.critical("[系統] 未能建立有效的執行器，系統即將關閉。")
+            # 如果沒有 runner (即閒置模式)，主執行緒進入等待模式以保持背景服務運行
+            while True:
+                time.sleep(1)
     except (KeyboardInterrupt, SystemExit):
         logging.info("\n[系統] 收到關閉信號，開始優雅關閉...")
     except Exception as e:
@@ -189,7 +195,10 @@ def main():
         worker_manager.shutdown_workers()
         if notifier:
             notifier.stop()
-
+        if ingestion_service:
+            ingestion_service.stop()
+        if scheduler:
+            scheduler.stop()
         logging.info("[系統] MoshouSapient 已完全關閉。")
         logging_listener.stop()
 
