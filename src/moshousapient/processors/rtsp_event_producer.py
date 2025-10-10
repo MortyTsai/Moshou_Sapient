@@ -24,8 +24,10 @@ from shapely.geometry import Point
 # 3. 本專案相對導入
 from ..configs.behavior_config import Config
 from ..services.task_queue_service import TaskQueueService
-from ..utils.behavior_analysis_utils import (analyze_roi_status,
-                                             analyze_tripwire_crossings)
+from ..utils.behavior_analysis_utils import (
+    analyze_roi_status,
+    analyze_tripwire_crossings,
+)
 from ..utils.geometry_utils import calculate_anchor_points
 from .base_processor import BaseProcessor
 
@@ -37,9 +39,16 @@ class RTSPEventProducer(BaseProcessor):
     負責處理高階行為分析和事件生命週期管理的處理器。
     """
 
-    def __init__(self, frame_queue: Queue, shared_state: dict, state_lock: Lock,
-                 notifier: Any, target_fps: float, rtsp_event_active_flag: Any,  # !! 修正: 使用 Any
-                 name: str = "RTSPEventProducer"):
+    def __init__(
+        self,
+        frame_queue: Queue,
+        shared_state: dict,
+        state_lock: Lock,
+        notifier: Any,
+        target_fps: float,
+        rtsp_event_active_flag: Any,  # !! 修正: 使用 Any
+        name: str = "RTSPEventProducer",
+    ):
         """
         初始化 RTSPEventProducer。
         """
@@ -67,7 +76,9 @@ class RTSPEventProducer(BaseProcessor):
 
         self.last_processed_time = 0.0
         self.time_accumulator = 0.0
-        self.min_frame_interval = 1.0 / self.target_fps if Config.VIDEO_FPS_MODE == "TARGET" and self.target_fps > 0 else 0
+        self.min_frame_interval = (
+            1.0 / self.target_fps if Config.VIDEO_FPS_MODE == "TARGET" and self.target_fps > 0 else 0
+        )
         logging.debug(f"[{self.name}] 初始化完成。")
 
     def _start_event(self, current_time: float):
@@ -113,7 +124,7 @@ class RTSPEventProducer(BaseProcessor):
                     break
 
                 item = self.frame_queue.get(timeout=1)
-                current_time = item['time']
+                current_time = item["time"]
 
                 if self.min_frame_interval > 0:
                     delta_time = current_time - self.last_processed_time
@@ -124,23 +135,26 @@ class RTSPEventProducer(BaseProcessor):
                     self.time_accumulator -= self.min_frame_interval
 
                 with self.state_lock:
-                    person_detected_now = self.shared_state.get('person_detected', False)
-                    current_tracks_obj = self.shared_state.get('tracked_objects', [])
+                    person_detected_now = self.shared_state.get("person_detected", False)
+                    current_tracks_obj = self.shared_state.get("tracked_objects", [])
 
                 current_tracks = np.array(current_tracks_obj)
                 if current_tracks.size == 0:
                     current_tracks = np.empty((0, 8))
 
                 track_roi_status_now = analyze_roi_status(
-                    tracks=current_tracks, roi_enabled=Config.ROI_ENABLED,
+                    tracks=current_tracks,
+                    roi_enabled=Config.ROI_ENABLED,
                     roi_polygon=Config.ROI_POLYGON_OBJECT,
-                    roi_settings=Config.ROI_SETTINGS, global_anchor_points=Config.ANCHOR_POINTS
+                    roi_settings=Config.ROI_SETTINGS,
+                    global_anchor_points=Config.ANCHOR_POINTS,
                 )
                 crossed_ids_map, self.track_last_positions = analyze_tripwire_crossings(
-                    tracks=current_tracks, track_last_positions=self.track_last_positions,
+                    tracks=current_tracks,
+                    track_last_positions=self.track_last_positions,
                     tripwires_enabled=Config.TRIPWIRES_ENABLED,
                     tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
-                    global_anchor_points=Config.ANCHOR_POINTS
+                    global_anchor_points=Config.ANCHOR_POINTS,
                 )
 
                 if crossed_ids_map:
@@ -168,8 +182,9 @@ class RTSPEventProducer(BaseProcessor):
 
         logging.debug(f"[{self.name}] 處理器已停止。")
 
-    def _prepare_frame_data(self, item: dict, current_tracks: np.ndarray,
-                            track_roi_status: Dict[int, bool]) -> Dict[str, Any]:
+    def _prepare_frame_data(
+        self, item: dict, current_tracks: np.ndarray, track_roi_status: Dict[int, bool]
+    ) -> Dict[str, Any]:
         """準備用於視覺化和儲存的單幀數據。"""
         tracks_with_anchors = []
         alert_ids_snapshot = self.tripwire_alert_ids.copy()
@@ -180,10 +195,10 @@ class RTSPEventProducer(BaseProcessor):
             vis_anchor_strategy = Config.ANCHOR_POINTS
             if track_id in alert_ids_snapshot:
                 for tripwire_obj in Config.TRIPWIRE_LINE_OBJECTS:
-                    vis_anchor_strategy = tripwire_obj["config"].get('anchor_points', Config.ANCHOR_POINTS)
+                    vis_anchor_strategy = tripwire_obj["config"].get("anchor_points", Config.ANCHOR_POINTS)
                     break
             elif track_roi_status.get(track_id, False):
-                vis_anchor_strategy = Config.ROI_SETTINGS.get('anchor_points', Config.ANCHOR_POINTS)
+                vis_anchor_strategy = Config.ROI_SETTINGS.get("anchor_points", Config.ANCHOR_POINTS)
 
             bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
             anchors = calculate_anchor_points(bbox_tuple, vis_anchor_strategy)
@@ -192,18 +207,23 @@ class RTSPEventProducer(BaseProcessor):
             is_in_roi = track_roi_status.get(track_id, False)
             has_crossed = track_id in alert_ids_snapshot
 
-            tracks_with_anchors.append({
-                'box_xyxy': bbox.tolist(), 'track_id': track_id,
-                'confidence': track[5] if len(track) > 5 else None,
-                'anchors': anchor_coords, 'is_in_roi': is_in_roi,
-                'has_crossed_tripwire': has_crossed
-            })
+            tracks_with_anchors.append(
+                {
+                    "box_xyxy": bbox.tolist(),
+                    "track_id": track_id,
+                    "confidence": track[5] if len(track) > 5 else None,
+                    "anchors": anchor_coords,
+                    "is_in_roi": is_in_roi,
+                    "has_crossed_tripwire": has_crossed,
+                }
+            )
 
         return {
-            'frame': item['frame'], 'time': item['time'],
-            'tracks': tracks_with_anchors,
-            'track_roi_status': track_roi_status,
-            'tripwire_alert_ids': alert_ids_snapshot,
+            "frame": item["frame"],
+            "time": item["time"],
+            "tracks": tracks_with_anchors,
+            "track_roi_status": track_roi_status,
+            "tripwire_alert_ids": alert_ids_snapshot,
         }
 
     def _update_event_state(self, person_detected_now: bool, current_time: float, frame_data: dict):
@@ -226,7 +246,7 @@ class RTSPEventProducer(BaseProcessor):
         """將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。"""
         temp_file_path = ""
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl', dir=str(Config.CAPTURES_DIR)) as temp_f:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl", dir=str(Config.CAPTURES_DIR)) as temp_f:
                 pickle.dump(self.event_recording_frames, temp_f)
                 temp_file_path = temp_f.name
 
@@ -250,7 +270,7 @@ class RTSPEventProducer(BaseProcessor):
 
     def _set_event_type(self, new_type: str):
         """根據優先級提升當前事件的類型。"""
-        priority_map = {'tripwire_alert': 2, 'dwell_alert': 1, 'person_detected': 0}
+        priority_map = {"tripwire_alert": 2, "dwell_alert": 1, "person_detected": 0}
         current_priority = priority_map.get(self.current_event_type, -1)
         new_priority = priority_map.get(new_type, -1)
 
@@ -268,18 +288,21 @@ class RTSPEventProducer(BaseProcessor):
         for track_id, is_in_roi in track_roi_status.items():
             if is_in_roi:
                 if track_id not in self.dwell_time_trackers:
-                    self.dwell_time_trackers[track_id] = {'start_time': current_time, 'alerted': False}
+                    self.dwell_time_trackers[track_id] = {
+                        "start_time": current_time,
+                        "alerted": False,
+                    }
                 else:
                     tracker_info = self.dwell_time_trackers[track_id]
-                    if not tracker_info['alerted']:
-                        dwell_duration = current_time - tracker_info['start_time']
-                        dwell_threshold = Config.ROI_SETTINGS.get('dwell_time_threshold', 3.0)
+                    if not tracker_info["alerted"]:
+                        dwell_duration = current_time - tracker_info["start_time"]
+                        dwell_threshold = Config.ROI_SETTINGS.get("dwell_time_threshold", 3.0)
                         if dwell_duration > dwell_threshold:
                             behavior_logger.warning(
                                 f"--- [停留警報] --- 目標 ID: {track_id} 在 ROI 區域停留已超過 {dwell_threshold} 秒!"
                             )
                             self._set_event_type("dwell_alert")
-                            tracker_info['alerted'] = True
+                            tracker_info["alerted"] = True
             elif track_id in self.dwell_time_trackers:
                 del self.dwell_time_trackers[track_id]
 

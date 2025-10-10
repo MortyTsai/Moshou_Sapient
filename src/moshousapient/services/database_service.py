@@ -18,11 +18,7 @@ os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
 
 DATABASE_URL = f"sqlite:///{DB_FILE}?check_same_thread=False"
 
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"timeout": 15}
-)
+engine = create_engine(DATABASE_URL, echo=False, connect_args={"timeout": 15})
 
 
 @event.listens_for(engine, "connect")

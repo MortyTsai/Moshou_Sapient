@@ -27,8 +27,7 @@ def get_point_side_of_line(p: Point, line_p1: Point, line_p2: Point) -> int:
     :return: 1 表示在左側, -1 表示在右側, 0 表示在線上。
     """
     tolerance = 1e-9
-    val = (line_p2.x - line_p1.x) * (p.y - line_p1.y) - \
-          (line_p2.y - line_p1.y) * (p.x - line_p1.x)
+    val = (line_p2.x - line_p1.x) * (p.y - line_p1.y) - (line_p2.y - line_p1.y) * (p.x - line_p1.x)
 
     if val > tolerance:
         return -1  # 右側
@@ -57,16 +56,16 @@ def calculate_anchor_points(bbox: Bbox, strategies: Union[str, List[str]]) -> Li
         strategies = [strategies]
 
     anchor_map = {
-        'bottom_center': Point((min_x + max_x) / 2, max_y),
-        'centroid': Point((min_x + max_x) / 2, (min_y + max_y) / 2),
-        'bottom_left': Point(min_x, max_y),
-        'bottom_right': Point(max_x, max_y),
-        'top_left': Point(min_x, min_y),
-        'top_right': Point(max_x, min_y),
-        'top_center': Point((min_x + max_x) / 2, min_y),
-        'left_center': Point(min_x, (min_y + max_y) / 2),
-        'right_center': Point(max_x, (min_y + max_y) / 2),
-        'full_bbox': box(min_x, min_y, max_x, max_y)
+        "bottom_center": Point((min_x + max_x) / 2, max_y),
+        "centroid": Point((min_x + max_x) / 2, (min_y + max_y) / 2),
+        "bottom_left": Point(min_x, max_y),
+        "bottom_right": Point(max_x, max_y),
+        "top_left": Point(min_x, min_y),
+        "top_right": Point(max_x, min_y),
+        "top_center": Point((min_x + max_x) / 2, min_y),
+        "left_center": Point(min_x, (min_y + max_y) / 2),
+        "right_center": Point(max_x, (min_y + max_y) / 2),
+        "full_bbox": box(min_x, min_y, max_x, max_y),
     }
 
     results = []

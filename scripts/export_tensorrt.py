@@ -48,14 +48,14 @@ def main():
 
     try:
         model.export(
-            format='engine',
+            format="engine",
             device=0,
             half=True,
             imgsz=[inference_height, inference_width],
-            workspace=8
+            workspace=8,
         )
 
-        print(f"\n[成功] 模型已成功匯出!")
+        print("\n[成功] 模型已成功匯出!")
         print(f"生成的引擎檔案位於: {output_engine_path}")
         print("MoshouSapient 現在將會自動使用此優化後的模型。")
 
@@ -64,5 +64,5 @@ def main():
         print("請檢查您的 CUDA, cuDNN 和 TensorRT 環境是否已正確安裝並配置。")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -37,10 +37,7 @@ def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
     return similarity
 
 
-def find_best_match_in_gallery(new_feature: NDArray,
-                               gallery: list[Person],
-                               match_threshold: float
-                               ) -> Optional[Person]:
+def find_best_match_in_gallery(new_feature: NDArray, gallery: list[Person], match_threshold: float) -> Optional[Person]:
     """
     在給定的畫廊 (候選人列表) 中，為新特徵尋找超過指定閾值的最佳匹配。
 

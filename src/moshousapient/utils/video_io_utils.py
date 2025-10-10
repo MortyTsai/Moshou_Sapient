@@ -49,7 +49,7 @@ class ThreadedVideoCapture:
             else:
                 time.sleep(0.01)  # 佇列已滿，稍作等待
 
-    def start(self) -> 'ThreadedVideoCapture':
+    def start(self) -> "ThreadedVideoCapture":
         """啟動背景讀取執行緒。"""
         self.thread.start()
         return self
@@ -84,19 +84,37 @@ def get_video_resolution(video_path: str) -> Optional[Tuple[int, int]]:
     :return: 一個包含 (寬度, 高度) 的元組，如果失敗則返回 None。
     """
     command = [
-        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height', '-of', 'json', video_path
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+        video_path,
     ]
     try:
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                check=True, text=True, encoding='utf-8')
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+            encoding="utf-8",
+        )
         data = json.loads(result.stdout)
-        if 'streams' in data and len(data['streams']) > 0:
-            width = data['streams'][0].get('width')
-            height = data['streams'][0].get('height')
+        if "streams" in data and len(data["streams"]) > 0:
+            width = data["streams"][0].get("width")
+            height = data["streams"][0].get("height")
             if width and height:
                 return int(width), int(height)
         return None
-    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        json.JSONDecodeError,
+    ) as e:
         logging.error(f"[系統] 獲取影片解析度時出錯: {e}")
         return None

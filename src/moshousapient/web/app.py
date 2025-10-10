@@ -24,15 +24,15 @@ def create_flask_app():
     app = Flask(__name__)
 
     # 抑制 Werkzeug 的標準日誌輸出，以保持終端乾淨
-    log = logging.getLogger('werkzeug')
+    log = logging.getLogger("werkzeug")
     log.setLevel(logging.ERROR)
 
-    @app.route('/captures/<path:filename>')
+    @app.route("/captures/<path:filename>")
     def serve_capture(filename):
         """提供對錄製影片檔案的訪問。"""
         return send_from_directory(Config.CAPTURES_DIR, filename)
 
-    @app.route('/')
+    @app.route("/")
     def index():
         """渲染主儀表板頁面。"""
         db = SessionLocal()
@@ -45,6 +45,6 @@ def create_flask_app():
             logging.error(f"從資料庫讀取事件時發生錯誤: {e}")
         finally:
             db.close()
-        return render_template('index.html', events=events)
+        return render_template("index.html", events=events)
 
     return app

@@ -6,11 +6,13 @@
 import logging
 import sys
 
+
 class StreamToLogger:
     """
     一個偽檔案流 (pseudo-file stream)，可將寫入其中的數據重定向到指定的 logger。
     用於捕獲標準輸出 (stdout) 和標準錯誤 (stderr)。
     """
+
     def __init__(self, logger: logging.Logger, level: int):
         """
         初始化 StreamToLogger。
@@ -20,7 +22,7 @@ class StreamToLogger:
         """
         self.logger = logger
         self.level = level
-        self.linebuf = ''
+        self.linebuf = ""
 
     def write(self, buf: str):
         """

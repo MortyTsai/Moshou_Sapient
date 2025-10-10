@@ -23,9 +23,16 @@ class InferenceProcessor(BaseProcessor):
     專門負責執行 AI 模型推論 (物件偵測、Re-ID) 和物件追蹤的處理器。
     """
 
-    def __init__(self, frame_queue: Queue, shared_state: dict, state_lock: Lock,
-                 model: YOLO, reid_model: YOLO, tracker_factory: Callable,
-                 name: str = "InferenceProcessor"):
+    def __init__(
+        self,
+        frame_queue: Queue,
+        shared_state: dict,
+        state_lock: Lock,
+        model: YOLO,
+        reid_model: YOLO,
+        tracker_factory: Callable,
+        name: str = "InferenceProcessor",
+    ):
         """
         初始化 InferenceProcessor。
 
@@ -63,7 +70,7 @@ class InferenceProcessor(BaseProcessor):
                 frame_counter += 1
 
                 # 圖像縮放已在 VideoStreamer 中完成，這裡直接使用
-                frame_for_inference = item['frame']
+                frame_for_inference = item["frame"]
 
                 dets_results = self.model(frame_for_inference, device=0, verbose=False, classes=[0], conf=0.4)
                 boxes_on_cpu = dets_results[0].boxes.cpu().numpy()
@@ -74,10 +81,10 @@ class InferenceProcessor(BaseProcessor):
                     reid_features_map = self._extract_reid_features(tracks, frame_for_inference)
 
                 with self.state_lock:
-                    self.shared_state['person_detected'] = len(tracks) > 0
-                    self.shared_state['tracked_objects'] = tracks
+                    self.shared_state["person_detected"] = len(tracks) > 0
+                    self.shared_state["tracked_objects"] = tracks
                     if reid_features_map:
-                        self.shared_state['reid_features_map'] = reid_features_map
+                        self.shared_state["reid_features_map"] = reid_features_map
 
             except Empty:
                 continue

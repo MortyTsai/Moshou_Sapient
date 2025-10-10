@@ -44,16 +44,16 @@ class FileEventProducer:
         """
         active_event_type: Optional[str] = None
         highest_priority = -1
-        tracks = frame_data.get('tracks', [])
+        tracks = frame_data.get("tracks", [])
         if not tracks:
             return False, None
 
         for track in tracks:
-            if track.get('has_crossed_tripwire'):
+            if track.get("has_crossed_tripwire"):
                 if 2 > highest_priority:
                     highest_priority = 2
                     active_event_type = "tripwire_alert"
-            if track.get('is_in_roi'):
+            if track.get("is_in_roi"):
                 if 1 > highest_priority:
                     highest_priority = 1
                     active_event_type = "dwell_alert"
@@ -123,7 +123,7 @@ class FileEventProducer:
             logging.warning("[FileEventProducer] 結果數據不完整，處理終止。")
             return
 
-        source_fps = analytics.get('source_fps', 30.0)
+        source_fps = analytics.get("source_fps", 30.0)
         if source_fps <= 0:
             logging.warning("源影片幀率為零，將使用預設值 30.0 FPS。")
             source_fps = 30.0
@@ -136,22 +136,26 @@ class FileEventProducer:
 
         logging.info(f"偵測到 {len(activity_groups)} 個獨立活動時段，正在分派任務...")
         source_meta = {
-            'width': analytics.get('source_width'),
-            'height': analytics.get('source_height'),
-            'fps': source_fps,
-            'total_frames': analytics.get('total_frames')
+            "width": analytics.get("source_width"),
+            "height": analytics.get("source_height"),
+            "fps": source_fps,
+            "total_frames": analytics.get("total_frames"),
         }
         for i, activity_data in enumerate(activity_groups):
             self._dispatch_video_task(activity_data, source_video_path, source_meta, i + 1)
 
-    def _dispatch_video_task(self, activity_data: Dict[str, Any], source_video_path: str,
-                             source_meta: Dict[str, Any], activity_index: int):
+    def _dispatch_video_task(
+        self,
+        activity_data: Dict[str, Any],
+        source_video_path: str,
+        source_meta: Dict[str, Any],
+        activity_index: int,
+    ):
         """將單個活動時段的元數據寫入臨時檔案，並將任務發送到任務佇列。"""
         temp_file_path = ""
         try:
             event_frames_metadata = [
-                {k: v for k, v in frame.items() if k != 'frame'}
-                for frame in activity_data['frames']
+                {k: v for k, v in frame.items() if k != "frame"} for frame in activity_data["frames"]
             ]
             if not event_frames_metadata:
                 return
@@ -163,16 +167,16 @@ class FileEventProducer:
                 is_f_active, f_event_type = self._is_frame_active(f)
                 if is_f_active and f_event_type:
                     if event_start_frame == -1:
-                        event_start_frame = f['frame_index']
+                        event_start_frame = f["frame_index"]
                     priority = self.EVENT_TYPE_PRIORITY.get(f_event_type, -1)
                     if priority > highest_priority:
                         highest_priority = priority
                         final_event_type = f_event_type
 
             if event_start_frame == -1:
-                event_start_frame = event_frames_metadata[0].get('frame_index', 0)
+                event_start_frame = event_frames_metadata[0].get("frame_index", 0)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl', dir=str(Config.CAPTURES_DIR)) as temp_f:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl", dir=str(Config.CAPTURES_DIR)) as temp_f:
                 pickle.dump(event_frames_metadata, temp_f)
                 temp_file_path = temp_f.name
 
@@ -187,7 +191,9 @@ class FileEventProducer:
             task_id = self.task_queue.add_task(payload_bytes)
 
             if task_id:
-                logging.debug(f"已成功將活動 #{activity_index} ('{final_event_type}') 作為任務 ID {task_id} 發送到佇列。")
+                logging.debug(
+                    f"已成功將活動 #{activity_index} ('{final_event_type}') 作為任務 ID {task_id} 發送到佇列。"
+                )
             else:
                 logging.error(f"將活動 #{activity_index} 發送到任務佇列失敗。")
 

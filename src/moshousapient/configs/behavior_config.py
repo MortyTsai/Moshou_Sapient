@@ -23,6 +23,7 @@ class Config:
     """
     一個靜態類別，作為所有應用程式配置的中央存取點。
     """
+
     # --- 從 settings 模組讀取靜態設定 ---
     VIDEO_SOURCE_TYPE: str = settings.VIDEO_SOURCE_TYPE.upper()
     RTSP_URL: str = settings.RTSP_URL
@@ -59,7 +60,7 @@ class Config:
 
     # --- 行為分析參數 (將從 YAML 載入) ---
     # 錨點系統設定
-    ANCHOR_POINTS: Union[str, List[str]] = 'bottom_center'
+    ANCHOR_POINTS: Union[str, List[str]] = "bottom_center"
     # ROI 相關設定
     ROI_ENABLED: bool = False
     ROI_SETTINGS: Dict[str, Any] = {}
@@ -79,33 +80,33 @@ class Config:
     def _load_behavior_config():
         """從 behavior_analysis.yaml 載入所有行為分析規則。"""
         try:
-            with open(Config.BEHAVIOR_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            with open(Config.BEHAVIOR_CONFIG_PATH, "r", encoding="utf-8") as f:
                 behavior_config = yaml.safe_load(f) or {}
 
             # 1. 載入全域錨點設定 (提供預設值以確保相容性)
-            Config.ANCHOR_POINTS = behavior_config.get('anchor_points', 'bottom_center')
+            Config.ANCHOR_POINTS = behavior_config.get("anchor_points", "bottom_center")
 
             # 2. 載入 ROI 設定
-            Config.ROI_SETTINGS = behavior_config.get('roi', {})
-            if Config.ROI_SETTINGS.get('enabled', False):
+            Config.ROI_SETTINGS = behavior_config.get("roi", {})
+            if Config.ROI_SETTINGS.get("enabled", False):
                 Config.ROI_ENABLED = True
                 logging.debug("[系統] 已成功載入 ROI 設定。")
 
             # 3. 載入 Tripwire 設定
-            Config.TRIPWIRE_SETTINGS = behavior_config.get('tripwires', {})
-            if Config.TRIPWIRE_SETTINGS.get('enabled', False):
+            Config.TRIPWIRE_SETTINGS = behavior_config.get("tripwires", {})
+            if Config.TRIPWIRE_SETTINGS.get("enabled", False):
                 Config.TRIPWIRES_ENABLED = True
                 logging.debug("[系統] 已成功載入 Tripwires 設定。")
 
             # 4. 載入遮蔽警報設定
-            Config.OCCLUSION_ALERT_SETTINGS = behavior_config.get('occlusion_alerts', {})
-            if Config.OCCLUSION_ALERT_SETTINGS.get('enabled', False):
+            Config.OCCLUSION_ALERT_SETTINGS = behavior_config.get("occlusion_alerts", {})
+            if Config.OCCLUSION_ALERT_SETTINGS.get("enabled", False):
                 Config.OCCLUSION_ALERT_ENABLED = True
                 logging.debug("[系統] 已成功載入 Occlusion Alert 設定。")
 
             # 5. 載入畫面異常警報設定
-            Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get('scene_anomaly_alerts', {})
-            if Config.SCENE_ANOMALY_ALERT_SETTINGS.get('enabled', False):
+            Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get("scene_anomaly_alerts", {})
+            if Config.SCENE_ANOMALY_ALERT_SETTINGS.get("enabled", False):
                 Config.SCENE_ANOMALY_ALERT_ENABLED = True
                 logging.debug("[系統] 已成功載入 Scene Anomaly Alert 設定。")
 
@@ -122,7 +123,7 @@ class Config:
             Config.ROI_POLYGON_OBJECT = None
             return
 
-        polygon_points = Config.ROI_SETTINGS.get('polygon_points', [])
+        polygon_points = Config.ROI_SETTINGS.get("polygon_points", [])
         if polygon_points and len(polygon_points) >= 3:
             try:
                 Config.ROI_POLYGON_OBJECT = Polygon(polygon_points)
@@ -142,7 +143,7 @@ class Config:
             logging.debug("[系統] Tripwire 功能未啟用，已跳過初始化。")
             return
 
-        lines = Config.TRIPWIRE_SETTINGS.get('lines', [])
+        lines = Config.TRIPWIRE_SETTINGS.get("lines", [])
         if not lines:
             logging.debug("[系統] 未設定任何有效的虛擬警戒線。")
             return
@@ -157,11 +158,13 @@ class Config:
                 line = LineString(points)
                 direction = line_config.get("alert_direction", "both")
                 # 儲存解析後的物件和原始設定
-                Config.TRIPWIRE_LINE_OBJECTS.append({
-                    "line": line,
-                    "direction": direction,
-                    "config": line_config  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
-                })
+                Config.TRIPWIRE_LINE_OBJECTS.append(
+                    {
+                        "line": line,
+                        "direction": direction,
+                        "config": line_config,  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
+                    }
+                )
             except (ShapelyError, TypeError, KeyError) as e:
                 logging.warning(f"[系統] 無法建立警戒線，設定可能無效: {e}。已跳過該設定: {line_config}")
 

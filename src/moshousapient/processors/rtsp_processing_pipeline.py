@@ -29,8 +29,14 @@ class RTSPPipeline:
     它負責協調影像流讀取、AI 推論和行為分析等一系列處理器。
     """
 
-    def __init__(self, camera_config: dict, model: YOLO, reid_model: YOLO, notifier: Any,
-                 rtsp_event_active_flag: Any):
+    def __init__(
+        self,
+        camera_config: dict,
+        model: YOLO,
+        reid_model: YOLO,
+        notifier: Any,
+        rtsp_event_active_flag: Any,
+    ):
         """
         初始化 RTSP 處理管線。
 
@@ -43,7 +49,7 @@ class RTSPPipeline:
         self.config = camera_config
         self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
-        self.shared_state = {'person_detected': False, 'tracked_objects': []}
+        self.shared_state = {"person_detected": False, "tracked_objects": []}
         self.shared_state_lock = threading.Lock()
 
         self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
@@ -59,7 +65,7 @@ class RTSPPipeline:
                 model=model,
                 reid_model=reid_model,
                 tracker_factory=self._initialize_tracker,
-                name=f"{self.name}-Inference"
+                name=f"{self.name}-Inference",
             ),
             RTSPEventProducer(
                 frame_queue=self.event_queue,
@@ -68,8 +74,8 @@ class RTSPPipeline:
                 notifier=self.notifier,
                 target_fps=Config.TARGET_FPS,
                 rtsp_event_active_flag=rtsp_event_active_flag,  # 將標誌傳遞下去
-                name=f"{self.name}-Event"
-            )
+                name=f"{self.name}-Event",
+            ),
         ]
         logging.debug(f"[{self.name}] 已初始化。")
 

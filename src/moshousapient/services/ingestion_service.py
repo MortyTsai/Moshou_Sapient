@@ -29,10 +29,11 @@ class _VideoFileEventHandler(PatternMatchingEventHandler):
     """
     一個專門處理影片檔案創建事件的處理器。
     """
+
     # 只關心常見的影片檔案格式
     VIDEO_PATTERNS = ["*.mp4", "*.avi", "*.mov", "*.mkv"]
 
-    def __init__(self, service_instance: 'IngestionService'):
+    def __init__(self, service_instance: "IngestionService"):
         super().__init__(patterns=self.VIDEO_PATTERNS, ignore_directories=True, case_sensitive=False)
         self._service_instance = service_instance
 
@@ -76,7 +77,7 @@ class IngestionService:
         self._observer = Observer()
         self._observer.schedule(event_handler, str(self._watch_directory), recursive=False)
         self._observer.start()
-        logging.info(f"[IngestionService] 監控服務已在背景啟動。")
+        logging.info("[IngestionService] 監控服務已在背景啟動。")
 
         try:
             while not self._stop_event.is_set():
@@ -94,7 +95,7 @@ class IngestionService:
             logging.warning("[IngestionService] 服務已在運行中，忽略啟動請求。")
             return
 
-        logging.info(f"[IngestionService] 正在啟動...")
+        logging.info("[IngestionService] 正在啟動...")
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_observer, name="IngestionServiceThread", daemon=True)
         self._thread.start()
@@ -134,8 +135,8 @@ class IngestionService:
             logging.info(f"[IngestionService] 發現有效新檔案 '{file_path.name}'，正在創建任務。")
 
             task_payload = {
-                'task_type': 'file_inference',
-                'video_path': str(file_path.resolve())  # 使用絕對路徑
+                "task_type": "file_inference",
+                "video_path": str(file_path.resolve()),  # 使用絕對路徑
             }
             payload_bytes = pickle.dumps(task_payload)
 
@@ -147,4 +148,7 @@ class IngestionService:
                 logging.error(f"[IngestionService] 為檔案 '{file_path.name}' 創建任務失敗。")
 
         except Exception as e:
-            logging.error(f"[IngestionService] 處理檔案 '{file_path.name}' 時發生錯誤: {e}", exc_info=True)
+            logging.error(
+                f"[IngestionService] 處理檔案 '{file_path.name}' 時發生錯誤: {e}",
+                exc_info=True,
+            )

@@ -10,12 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=PROJECT_ROOT / ".env",
-        env_file_encoding='utf-8',
-        case_sensitive=False
-    )
+    model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", env_file_encoding="utf-8", case_sensitive=False)
 
     # --- 系統運行模式設定 ---
     VIDEO_SOURCE_TYPE: str = "RTSP"
@@ -80,6 +77,7 @@ class Settings(BaseSettings):
     REID_MODEL_PATH: Path = MODELS_DIR / "yolo11s-cls.pt"
     TRACKER_CONFIG_PATH: Path = CONFIGS_DIR / "custom_botsort.yaml"
     BEHAVIOR_CONFIG_PATH: Path = CONFIGS_DIR / "behavior_analysis.yaml"
+
 
 settings = Settings()
 os.makedirs(settings.CAPTURES_DIR, exist_ok=True)

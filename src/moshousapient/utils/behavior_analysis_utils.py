@@ -4,6 +4,7 @@
 
 這些函式是無狀態的，接收追蹤數據和設定作為輸入，並返回分析結果。
 """
+
 # 1. 標準庫導入
 from typing import Dict, Any, List, Tuple, Union, cast
 
@@ -15,12 +16,13 @@ from shapely.geometry import Point, Polygon, LineString
 from .geometry_utils import calculate_anchor_points, get_point_side_of_line
 
 
-def analyze_roi_status(tracks: np.ndarray,
-                       roi_enabled: bool,
-                       roi_polygon: Union[Polygon, None],
-                       roi_settings: Dict[str, Any],
-                       global_anchor_points: Union[str, List[str]]
-                       ) -> Dict[int, bool]:
+def analyze_roi_status(
+    tracks: np.ndarray,
+    roi_enabled: bool,
+    roi_polygon: Union[Polygon, None],
+    roi_settings: Dict[str, Any],
+    global_anchor_points: Union[str, List[str]],
+) -> Dict[int, bool]:
     """
     根據傳入的 ROI 設定，計算每個追蹤目標是否在感興趣區域內。
 
@@ -34,7 +36,7 @@ def analyze_roi_status(tracks: np.ndarray,
     if not roi_enabled or not roi_polygon:
         return {}
 
-    anchor_strategy = roi_settings.get('anchor_points', global_anchor_points)
+    anchor_strategy = roi_settings.get("anchor_points", global_anchor_points)
     track_roi_status = {}
 
     for track in tracks:
@@ -59,11 +61,11 @@ def analyze_roi_status(tracks: np.ndarray,
 
 
 def analyze_tripwire_crossings(
-        tracks: np.ndarray,
-        track_last_positions: Dict[Tuple[int, int], Point],
-        tripwires_enabled: bool,
-        tripwire_line_objects: List[Dict[str, Any]],
-        global_anchor_points: Union[str, List[str]]
+    tracks: np.ndarray,
+    track_last_positions: Dict[Tuple[int, int], Point],
+    tripwires_enabled: bool,
+    tripwire_line_objects: List[Dict[str, Any]],
+    global_anchor_points: Union[str, List[str]],
 ) -> Tuple[Dict[int, bool], Dict[Tuple[int, int], Point]]:
     """
     根據傳入的 Tripwire 設定，分析每個追蹤目標是否穿越了警戒線。
@@ -92,7 +94,7 @@ def analyze_tripwire_crossings(
             alert_direction = tripwire_obj["direction"]
             tripwire_config = tripwire_obj["config"]
 
-            anchor_strategy = tripwire_config.get('anchor_points', global_anchor_points)
+            anchor_strategy = tripwire_config.get("anchor_points", global_anchor_points)
             bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
             current_anchors = calculate_anchor_points(bbox_tuple, anchor_strategy)
 
@@ -113,9 +115,11 @@ def analyze_tripwire_crossings(
                         if side_before != 0 and side_after != 0 and side_before != side_after:
                             crossed_to_right = side_before == 1 and side_after == -1
                             crossed_to_left = side_before == -1 and side_after == 1
-                            should_alert = (alert_direction == "both" or
-                                            (alert_direction == "cross_to_right" and crossed_to_right) or
-                                            (alert_direction == "cross_to_left" and crossed_to_left))
+                            should_alert = (
+                                alert_direction == "both"
+                                or (alert_direction == "cross_to_right" and crossed_to_right)
+                                or (alert_direction == "cross_to_left" and crossed_to_left)
+                            )
                             if should_alert:
                                 crossed_ids[track_id] = True
                                 break

@@ -39,17 +39,17 @@ class NotificationService:
 
         @self.client.event
         async def on_ready():
-            logging.debug(f'[Discord] 已登入為 {self.client.user}')
+            logging.debug(f"[Discord] 已登入為 {self.client.user}")
             self.channel = self.client.get_channel(self.channel_id)
             if self.channel:
                 # 將此處的 INFO 降級為 DEBUG
-                logging.debug(f'[Discord] 已成功連接至頻道: {self.channel.name}')
+                logging.debug(f"[Discord] 已成功連接至頻道: {self.channel.name}")
             else:
-                logging.error(f'[Discord] 錯誤: 找不到頻道 ID: {self.channel_id}')
+                logging.error(f"[Discord] 錯誤: 找不到頻道 ID: {self.channel_id}")
 
     def start(self):
         """在一個獨立的執行緒中啟動 Discord Bot。"""
-        discord_logger = logging.getLogger('discord')
+        discord_logger = logging.getLogger("discord")
         discord_logger.setLevel(logging.WARNING)
         self.thread = threading.Thread(target=self._run_bot, name="DiscordBotThread", daemon=True)
         self.thread.start()
@@ -117,7 +117,7 @@ class NotificationService:
                 try:
                     future.result(timeout=10)
                 except Exception as e:
-                    logging.error(f'[Discord] 等待通知完成時發生錯誤: {e}')
+                    logging.error(f"[Discord] 等待通知完成時發生錯誤: {e}")
             logging.debug("[Discord] 所有待發送通知已處理完畢。")
 
         if self.client.is_ready() and self.loop and self.loop.is_running():

@@ -41,11 +41,9 @@ class TaskQueueService:
 
     def _get_connection(self) -> sqlite3.Connection:
         """為當前執行緒獲取或建立一個資料庫連線。"""
-        if not hasattr(self.local, 'conn') or self.local.conn is None:
+        if not hasattr(self.local, "conn") or self.local.conn is None:
             try:
-                self.local.conn = sqlite3.connect(
-                    self.db_path, timeout=10, check_same_thread=False
-                )
+                self.local.conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
                 self.local.conn.execute("PRAGMA journal_mode=WAL;")
                 self.local.conn.row_factory = sqlite3.Row
             except sqlite3.Error as e:
@@ -55,7 +53,7 @@ class TaskQueueService:
 
     def close_connection(self):
         """關閉當前執行緒的資料庫連線。"""
-        if hasattr(self.local, 'conn') and self.local.conn is not None:
+        if hasattr(self.local, "conn") and self.local.conn is not None:
             self.local.conn.close()
             self.local.conn = None
 
@@ -79,10 +77,10 @@ class TaskQueueService:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON tasks (status);")
 
             cursor.execute("PRAGMA table_info(tasks)")
-            columns = [row['name'] for row in cursor.fetchall()]
-            if 'retry_count' not in columns:
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "retry_count" not in columns:
                 cursor.execute("ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0")
-            if 'last_error' not in columns:
+            if "last_error" not in columns:
                 cursor.execute("ALTER TABLE tasks ADD COLUMN last_error TEXT")
 
             conn.commit()
@@ -96,10 +94,7 @@ class TaskQueueService:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO tasks (payload, status) VALUES (?, 'pending')",
-                (payload,)
-            )
+            cursor.execute("INSERT INTO tasks (payload, status) VALUES (?, 'pending')", (payload,))
             conn.commit()
             task_id = cursor.lastrowid
             logging.debug(f"[TaskQueue] 已成功新增任務 ID: {task_id}")
@@ -123,8 +118,8 @@ class TaskQueueService:
 
             for row in cursor.fetchall():
                 try:
-                    payload_dict = pickle.loads(row['payload'])
-                    if payload_dict.get('task_type') == task_type:
+                    payload_dict = pickle.loads(row["payload"])
+                    if payload_dict.get("task_type") == task_type:
                         return True
                 except (pickle.UnpicklingError, KeyError):
                     # 忽略無法解析或格式不符的 payload
@@ -140,21 +135,19 @@ class TaskQueueService:
             conn = self._get_connection()
             with conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, payload FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-                )
+                cursor.execute("SELECT id, payload FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1")
                 task_row = cursor.fetchone()
                 if task_row is None:
                     return None
 
-                task_id = task_row['id']
-                payload = task_row['payload']
+                task_id = task_row["id"]
+                payload = task_row["payload"]
                 cursor.execute(
                     "UPDATE tasks SET status = 'processing', worker_id = ?, reserved_at = ? WHERE id = ? AND status = 'pending'",
-                    (worker_id, datetime.now(timezone.utc), task_id)
+                    (worker_id, datetime.now(timezone.utc), task_id),
                 )
                 if cursor.rowcount > 0:
-                    task_data = {'id': task_id, 'payload': payload}
+                    task_data = {"id": task_id, "payload": payload}
                     logging.debug(f"[TaskQueue] Worker '{worker_id}' 已預留任務 ID: {task_id}")
                     return task_data
                 else:
@@ -185,7 +178,7 @@ class TaskQueueService:
                     # 直接將任務狀態改回 pending，不增加重試計數，用於任務釋放
                     cursor.execute(
                         "UPDATE tasks SET status = 'pending', worker_id = NULL, reserved_at = NULL, last_error = ? WHERE id = ?",
-                        (error_message, task_id)
+                        (error_message, task_id),
                     )
                     return
 
@@ -195,24 +188,29 @@ class TaskQueueService:
                     logging.warning(f"[TaskQueue] 嘗試標記失敗時找不到任務 ID {task_id}。可能已被處理。")
                     return
 
-                current_retries = result['retry_count']
+                current_retries = result["retry_count"]
                 if current_retries + 1 >= self.max_retries:
                     final_error_msg = f"Max retries reached. Last error: {error_message}"
                     logging.error(
-                        f"[TaskQueue] 任務 ID {task_id} 已達到最大重試次數 ({self.max_retries})。將標記為永久失敗。")
+                        f"[TaskQueue] 任務 ID {task_id} 已達到最大重試次數 ({self.max_retries})。將標記為永久失敗。"
+                    )
                     cursor.execute(
                         "UPDATE tasks SET status = 'failed', last_error = ? WHERE id = ?",
-                        (final_error_msg, task_id)
+                        (final_error_msg, task_id),
                     )
                 else:
                     logging.warning(
-                        f"[TaskQueue] 任務 ID {task_id} 處理失敗 (嘗試 {current_retries + 1}/{self.max_retries})，將重新排隊。")
+                        f"[TaskQueue] 任務 ID {task_id} 處理失敗 (嘗試 {current_retries + 1}/{self.max_retries})，將重新排隊。"
+                    )
                     cursor.execute(
                         "UPDATE tasks SET status = 'pending', worker_id = NULL, reserved_at = NULL, retry_count = retry_count + 1, last_error = ? WHERE id = ?",
-                        (error_message, task_id)
+                        (error_message, task_id),
                     )
         except sqlite3.Error as e:
-            logging.error(f"[TaskQueue] 標記任務 ID {task_id} 失敗時發生資料庫錯誤: {e}", exc_info=True)
+            logging.error(
+                f"[TaskQueue] 標記任務 ID {task_id} 失敗時發生資料庫錯誤: {e}",
+                exc_info=True,
+            )
 
     def delete_stale_tasks(self, timeout_seconds: int = 600) -> int:
         """查找並刪除因 Worker 崩潰而卡在 'processing' 狀態的過期任務。"""
@@ -223,19 +221,19 @@ class TaskQueueService:
                 timeout_point = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
                 cursor.execute(
                     "SELECT id, worker_id FROM tasks WHERE status = 'processing' AND reserved_at < ?",
-                    (timeout_point,)
+                    (timeout_point,),
                 )
                 stale_tasks = cursor.fetchall()
                 if not stale_tasks:
                     logging.debug("[TaskQueue] 系統啟動檢查：未發現需要清理的過期任務。")
                     return 0
 
-                task_ids_to_delete = [task['id'] for task in stale_tasks]
+                task_ids_to_delete = [task["id"] for task in stale_tasks]
                 logging.warning(f"[TaskQueue] 發現 {len(stale_tasks)} 個因上次異常關閉而遺留的任務，將其清理。")
-                placeholders = ','.join('?' for _ in task_ids_to_delete)
+                placeholders = ",".join("?" for _ in task_ids_to_delete)
                 cursor.execute(
                     f"DELETE FROM tasks WHERE id IN ({placeholders})",
-                    task_ids_to_delete
+                    task_ids_to_delete,
                 )
                 return len(task_ids_to_delete)
         except sqlite3.Error as e:
@@ -275,20 +273,21 @@ class TaskQueueService:
                 # 查找所有超時的 'processing' 任務
                 cursor.execute(
                     "SELECT id FROM tasks WHERE status = 'processing' AND reserved_at < ?",
-                    (timeout_point,)
+                    (timeout_point,),
                 )
                 stale_tasks = cursor.fetchall()
                 if not stale_tasks:
                     return 0
 
-                task_ids_to_reset = [task['id'] for task in stale_tasks]
+                task_ids_to_reset = [task["id"] for task in stale_tasks]
                 logging.warning(
-                    f"[TaskQueue] 發現 {len(task_ids_to_reset)} 個過期的 'processing' 任務，將其狀態重置為 'pending'。")
+                    f"[TaskQueue] 發現 {len(task_ids_to_reset)} 個過期的 'processing' 任務，將其狀態重置為 'pending'。"
+                )
 
-                placeholders = ','.join('?' for _ in task_ids_to_reset)
+                placeholders = ",".join("?" for _ in task_ids_to_reset)
                 cursor.execute(
                     f"UPDATE tasks SET status = 'pending', worker_id = NULL, reserved_at = NULL, last_error = 'Reset by Scheduler' WHERE id IN ({placeholders})",
-                    task_ids_to_reset
+                    task_ids_to_reset,
                 )
                 return len(task_ids_to_reset)
         except sqlite3.Error as e:

@@ -19,6 +19,7 @@ class LevelFilter(logging.Filter):
     """
     根據指定的最低日誌級別過濾日誌記錄。
     """
+
     def __init__(self, low_level):
         super().__init__()
         self.low_level = low_level
@@ -60,17 +61,17 @@ def setup_logging_listener(log_queue: Queue):
     """
     # --- 1. 建立不同的日誌格式 ---
     dev_formatter = logging.Formatter(
-        '%(asctime)s - PID:%(process)-6d - %(threadName)-25s - %(levelname)-8s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - PID:%(process)-6d - %(threadName)-25s - %(levelname)-8s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    user_formatter = logging.Formatter('%(asctime)s - %(levelname)-8s - %(message)s', datefmt='%H:%M:%S')
+    user_formatter = logging.Formatter("%(asctime)s - %(levelname)-8s - %(message)s", datefmt="%H:%M:%S")
 
     # --- 2. 設定檔案處理器 (開發者日誌) ---
     log_dir = settings.DATA_DIR / "logs"
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = log_dir / "moshousapient.log"
     file_handler = logging.handlers.RotatingFileHandler(
-        log_file_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'
+        log_file_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
     file_handler.setFormatter(dev_formatter)
     # 檔案處理器不過濾，記錄所有 DEBUG 及以上級別的日誌

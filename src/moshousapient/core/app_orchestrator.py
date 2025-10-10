@@ -55,7 +55,7 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         if not Config.RTSP_URL:
             logging.critical("[嚴重錯誤] 未設定完整的 RTSP_URL，請檢查 .env 檔案。")
             return None
-        logging.debug(f"[系統] 影像來源模式: RTSP 即時串流")
+        logging.debug("[系統] 影像來源模式: RTSP 即時串流")
         source_uri = Config.RTSP_URL
         source_name = "RTSP-Cam"
         protocol_setting = Config.RTSP_TRANSPORT_PROTOCOL.lower()
@@ -67,15 +67,15 @@ def get_camera_config() -> Optional[Dict[str, Any]]:
         return {
             "name": f"Pipeline-{source_name}",
             "rtsp_url": source_uri,
-            "transport_protocol": transport_protocol
+            "transport_protocol": transport_protocol,
         }
     return None
 
 
 def main():
     """應用程式主入口點。"""
-    if mp.get_start_method(allow_none=True) != 'spawn':
-        mp.set_start_method('spawn', force=True)
+    if mp.get_start_method(allow_none=True) != "spawn":
+        mp.set_start_method("spawn", force=True)
 
     log_queue = mp.Queue(-1)
     configure_logging_for_queue(log_queue)
@@ -90,13 +90,12 @@ def main():
     init_db()
 
     # 創建一個跨程序共享的布林標誌，用於指示 RTSP 事件是否正在活躍處理中
-    rtsp_event_active_flag = mp.Value('b', False)
+    rtsp_event_active_flag = mp.Value("b", False)
 
     notifier: Optional[NotificationService] = None
     if Config.DISCORD_ENABLED:
         if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
-            notifier = NotificationService(token=Config.DISCORD_TOKEN,
-                                           channel_id=Config.DISCORD_CHANNEL_ID)
+            notifier = NotificationService(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
             notifier.start()
         else:
             logging.warning("[系統] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
@@ -107,7 +106,7 @@ def main():
         task_queue_for_ingestion = TaskQueueService()
         ingestion_service = IngestionService(
             watch_directory=settings.INGESTION_WATCH_DIR,
-            task_queue=task_queue_for_ingestion
+            task_queue=task_queue_for_ingestion,
         )
         ingestion_service.start()
 
@@ -118,7 +117,7 @@ def main():
         # 將共享標誌傳遞給 Scheduler
         scheduler = Scheduler(
             task_queue=task_queue_for_scheduler,
-            rtsp_event_active_flag=rtsp_event_active_flag
+            rtsp_event_active_flag=rtsp_event_active_flag,
         )
         scheduler.start()
 
@@ -128,7 +127,7 @@ def main():
     def run_flask_silently():
         flask_logger = logging.getLogger("flask_server")
         with StreamToLogger(flask_logger, logging.DEBUG):
-            flask_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+            flask_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
 
     web_thread = threading.Thread(target=run_flask_silently, daemon=True, name="WebDashboardThread")
     web_thread.start()
@@ -138,8 +137,9 @@ def main():
         try:
             from ultralytics import YOLO
             import numpy as np
+
             logging.debug(f"[YOLO] 正在從 {Config.MODEL_PATH} 載入 TensorRT 模型...")
-            model = YOLO(Config.MODEL_PATH, task='detect')
+            model = YOLO(Config.MODEL_PATH, task="detect")
             warmup_frame = np.zeros((Config.ANALYSIS_HEIGHT, Config.ANALYSIS_WIDTH, 3), dtype=np.uint8)
             model.predict(warmup_frame, device=0, verbose=False)
             logging.debug("[YOLO] TensorRT 模型已成功載入並預熱。")
@@ -151,31 +151,32 @@ def main():
 
             camera_config = get_camera_config()
             if not camera_config:
-                if notifier: notifier.stop()
+                if notifier:
+                    notifier.stop()
                 sys.exit(1)
 
             # 將共享標誌傳遞給 RTSP 處理管線
-            pipelines = [RTSPPipeline(
-                camera_config=camera_config,
-                model=model,
-                reid_model=reid_model,
-                notifier=notifier,
-                rtsp_event_active_flag=rtsp_event_active_flag
-            )]
+            pipelines = [
+                RTSPPipeline(
+                    camera_config=camera_config,
+                    model=model,
+                    reid_model=reid_model,
+                    notifier=notifier,
+                    rtsp_event_active_flag=rtsp_event_active_flag,
+                )
+            ]
             runner = RTSPProducerRunner(pipelines, notifier)
         except Exception as e:
             logging.critical(f"[模型載入] 嚴重錯誤: 無法載入 AI 模型。{e}", exc_info=True)
-            if notifier: notifier.stop()
+            if notifier:
+                notifier.stop()
             sys.exit(1)
     else:
         logging.info("[系統] 未設定 RTSP 模式。系統將在閒置模式下運行，僅監聽背景服務。")
 
-    worker_manager = WorkerManager(
-        num_workers=settings.VIDEO_PROCESSING_WORKERS,
-        log_queue=log_queue
-    )
+    worker_manager = WorkerManager(num_workers=settings.VIDEO_PROCESSING_WORKERS, log_queue=log_queue)
 
-    logging.info(f"MoshouSapient 系統啟動完成，Web 儀表板位於 http://127.0.0.1:5000")
+    logging.info("MoshouSapient 系統啟動完成，Web 儀表板位於 http://127.0.0.1:5000")
 
     try:
         worker_manager.start_workers()

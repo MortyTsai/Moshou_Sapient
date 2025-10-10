@@ -70,16 +70,8 @@ class Scheduler:
         啟動一個新的 queue_inference_job 子程序。
         """
         try:
-            command = [
-                sys.executable,
-                "-m",
-                "moshousapient.jobs.queue_inference_job"
-            ]
-            self._worker_process = subprocess.Popen(
-                command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            command = [sys.executable, "-m", "moshousapient.jobs.queue_inference_job"]
+            self._worker_process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logging.info(f"[Scheduler] 已成功啟動佇列推論 Job，PID: {self._worker_process.pid}")
         except Exception as e:
             logging.critical(f"[Scheduler] 啟動佇列推論 Job 失敗: {e}", exc_info=True)
@@ -110,15 +102,17 @@ class Scheduler:
                     if rescued_count > 0:
                         logging.info(f"[Scheduler] 已成功救援 {rescued_count} 個卡住的任務。")
 
-                    has_pending_tasks = self._task_queue.has_pending_task_by_type('file_inference')
+                    has_pending_tasks = self._task_queue.has_pending_task_by_type("file_inference")
 
                     if has_pending_tasks and not is_rtsp_active:
                         logging.info("[Scheduler] 偵測到待辦任務且 RTSP 閒置，準備啟動佇列推論 Job。")
                         self._launch_worker()
                     else:
                         reasons = []
-                        if not has_pending_tasks: reasons.append("無待辦任務")
-                        if is_rtsp_active: reasons.append("RTSP 事件活躍")
+                        if not has_pending_tasks:
+                            reasons.append("無待辦任務")
+                        if is_rtsp_active:
+                            reasons.append("RTSP 事件活躍")
                         if reasons:
                             logging.debug(f"[Scheduler] 未滿足啟動條件 ({', '.join(reasons)})。")
                 else:

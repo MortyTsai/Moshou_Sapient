@@ -43,7 +43,10 @@ from moshousapient.configs.settings_config import settings
 from moshousapient.services.task_queue_service import TaskQueueService
 from moshousapient.processors.file_event_producer import FileEventProducer
 from moshousapient.configs.behavior_config import Config as BehaviorConfigMain
-from moshousapient.utils.behavior_analysis_utils import analyze_roi_status, analyze_tripwire_crossings
+from moshousapient.utils.behavior_analysis_utils import (
+    analyze_roi_status,
+    analyze_tripwire_crossings,
+)
 from moshousapient.utils.geometry_utils import calculate_anchor_points
 
 
@@ -55,12 +58,13 @@ def setup_logging_for_job():
 
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - PID:%(process)d - %(levelname)-8s - %(message)s',
+        format="%(asctime)s - PID:%(process)d - %(levelname)-8s - %(message)s",
         handlers=[
-            logging.handlers.RotatingFileHandler(log_file_path, maxBytes=2 * 1024 * 1024, backupCount=3,
-                                                 encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
+            logging.handlers.RotatingFileHandler(
+                log_file_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+            ),
+            logging.StreamHandler(sys.stdout),
+        ],
     )
 
 
@@ -68,7 +72,7 @@ def load_models() -> Dict[str, Any]:
     """載入並預熱所有需要的 AI 模型。"""
     try:
         logging.debug(f"正在從 {settings.MODEL_PATH} 載入 TensorRT 模型...")
-        model = YOLO(settings.MODEL_PATH, task='detect')
+        model = YOLO(settings.MODEL_PATH, task="detect")
 
         logging.debug(f"正在載入 {settings.REID_MODEL_PATH} 作為特徵提取器...")
         reid_model = YOLO(settings.REID_MODEL_PATH)
@@ -113,7 +117,8 @@ def run_full_inference_on_file(video_path: Path, models: Dict[str, Any]) -> Dict
 
     while True:
         ret, frame = cap.read()
-        if not ret: break
+        if not ret:
+            break
         frame_count += 1
         frame_low_res = cv2.resize(frame, (settings.ANALYSIS_WIDTH, settings.ANALYSIS_HEIGHT))
 
@@ -137,15 +142,18 @@ def run_full_inference_on_file(video_path: Path, models: Dict[str, Any]) -> Dict
                         reid_features_map[track_id] = embeddings[i].cpu().numpy().tolist()
 
             roi_status = analyze_roi_status(
-                tracks=tracks, roi_enabled=BehaviorConfigMain.ROI_ENABLED,
-                roi_polygon=BehaviorConfigMain.ROI_POLYGON_OBJECT, roi_settings=BehaviorConfigMain.ROI_SETTINGS,
-                global_anchor_points=BehaviorConfigMain.ANCHOR_POINTS
+                tracks=tracks,
+                roi_enabled=BehaviorConfigMain.ROI_ENABLED,
+                roi_polygon=BehaviorConfigMain.ROI_POLYGON_OBJECT,
+                roi_settings=BehaviorConfigMain.ROI_SETTINGS,
+                global_anchor_points=BehaviorConfigMain.ANCHOR_POINTS,
             )
             crossed_status, track_last_positions = analyze_tripwire_crossings(
-                tracks=tracks, track_last_positions=track_last_positions,
+                tracks=tracks,
+                track_last_positions=track_last_positions,
                 tripwires_enabled=BehaviorConfigMain.TRIPWIRES_ENABLED,
                 tripwire_line_objects=BehaviorConfigMain.TRIPWIRE_LINE_OBJECTS,
-                global_anchor_points=BehaviorConfigMain.ANCHOR_POINTS
+                global_anchor_points=BehaviorConfigMain.ANCHOR_POINTS,
             )
 
             for track in tracks:
@@ -155,26 +163,30 @@ def run_full_inference_on_file(video_path: Path, models: Dict[str, Any]) -> Dict
                 vis_anchor_strategy = BehaviorConfigMain.ANCHOR_POINTS
                 if track_id in crossed_status:
                     for tripwire_obj in BehaviorConfigMain.TRIPWIRE_LINE_OBJECTS:
-                        vis_anchor_strategy = tripwire_obj["config"].get('anchor_points',
-                                                                         BehaviorConfigMain.ANCHOR_POINTS)
+                        vis_anchor_strategy = tripwire_obj["config"].get(
+                            "anchor_points", BehaviorConfigMain.ANCHOR_POINTS
+                        )
                         break
                 elif roi_status.get(track_id, False):
-                    vis_anchor_strategy = BehaviorConfigMain.ROI_SETTINGS.get('anchor_points',
-                                                                              BehaviorConfigMain.ANCHOR_POINTS)
+                    vis_anchor_strategy = BehaviorConfigMain.ROI_SETTINGS.get(
+                        "anchor_points", BehaviorConfigMain.ANCHOR_POINTS
+                    )
 
                 bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
                 vis_anchors = calculate_anchor_points(bbox_tuple, vis_anchor_strategy)
                 anchor_coords = [list(a.coords)[0] for a in vis_anchors if isinstance(a, Point)]
 
-                current_frame_tracks_data.append({
-                    'track_id': track_id,
-                    'box_xyxy': [float(c) for c in bbox],
-                    'confidence': float(track[5]) if len(track) > 5 else None,
-                    'feature': reid_features_map.get(track_id),
-                    'is_in_roi': roi_status.get(track_id, False),
-                    'has_crossed_tripwire': track_id in crossed_status,
-                    'anchors': anchor_coords
-                })
+                current_frame_tracks_data.append(
+                    {
+                        "track_id": track_id,
+                        "box_xyxy": [float(c) for c in bbox],
+                        "confidence": float(track[5]) if len(track) > 5 else None,
+                        "feature": reid_features_map.get(track_id),
+                        "is_in_roi": roi_status.get(track_id, False),
+                        "has_crossed_tripwire": track_id in crossed_status,
+                        "anchors": anchor_coords,
+                    }
+                )
 
         all_frame_data.append({"frame_index": frame_count, "tracks": current_frame_tracks_data})
 
@@ -183,11 +195,16 @@ def run_full_inference_on_file(video_path: Path, models: Dict[str, Any]) -> Dict
     logging.info(f"影片分析完成。共處理 {frame_count} 幀，耗時 {processing_duration:.2f} 秒。")
 
     return {
-        "video_path": str(video_path), "status": "success",
-        "analytics": {"total_frames": frame_count, "source_fps": source_fps,
-                      "processing_duration_sec": processing_duration,
-                      "source_width": source_width, "source_height": source_height},
-        "frames": all_frame_data
+        "video_path": str(video_path),
+        "status": "success",
+        "analytics": {
+            "total_frames": frame_count,
+            "source_fps": source_fps,
+            "processing_duration_sec": processing_duration,
+            "source_width": source_width,
+            "source_height": source_height,
+        },
+        "frames": all_frame_data,
     }
 
 
@@ -206,13 +223,13 @@ def main():
             logging.info("佇列中沒有待處理任務，Job 正常退出。")
             return
 
-        payload = pickle.loads(task['payload'])
-        if payload.get('task_type') != 'file_inference':
+        payload = pickle.loads(task["payload"])
+        if payload.get("task_type") != "file_inference":
             logging.warning(f"獲取到非預期任務類型 '{payload.get('task_type')}'，將其釋放回佇列。")
-            task_queue.fail_task(task['id'], "Requeued due to wrong type", requeue=True)
+            task_queue.fail_task(task["id"], "Requeued due to wrong type", requeue=True)
             return
 
-        video_path = Path(payload['video_path'])
+        video_path = Path(payload["video_path"])
         logging.info(f"已預留任務 ID: {task['id']}，處理檔案: {video_path.name}")
 
         if not video_path.exists():
@@ -229,13 +246,13 @@ def main():
         producer = FileEventProducer(notifier=None)
         producer.process_results(inference_results)
 
-        task_queue.complete_task(task['id'])
+        task_queue.complete_task(task["id"])
         logging.info(f"任務 ID: {task['id']} 已成功處理並完成。")
 
     except Exception as e:
         logging.error(f"處理任務時發生未預期錯誤: {e}", exc_info=True)
         if task:
-            task_queue.fail_task(task['id'], f"Unhandled exception: {e}")
+            task_queue.fail_task(task["id"], f"Unhandled exception: {e}")
     finally:
         task_queue.close_connection()
         logging.info(f"'{worker_id}' 退出。")

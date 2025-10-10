@@ -54,7 +54,7 @@ class WorkerManager:
                 process = mp.Process(
                     target=worker_entrypoint,
                     args=(self.log_queue,),
-                    name=f"Worker-{i + 1}"
+                    name=f"Worker-{i + 1}",
                 )
                 process.daemon = True
                 self.worker_processes.append(process)
@@ -80,7 +80,7 @@ class WorkerManager:
                 except Exception as e:
                     logging.error(f"發送終止信號到 {process.name} 失敗: {e}")
 
-        logging.debug(f"[WorkerManager] 等待所有 Worker 終止...")
+        logging.debug("[WorkerManager] 等待所有 Worker 終止...")
         timeout = 10
         start_time = time.time()
 
