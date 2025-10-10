@@ -30,15 +30,15 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 # 3. 本專案相對導入
-from moshousapient.services.task_queue_service import TaskQueueService
-from moshousapient.services.notification_service import NotificationService
-from moshousapient.services.database_service import SessionLocal
-from moshousapient.services.database_models import Event
-from moshousapient.configs.settings_config import settings
-from moshousapient.configs.logging_config import configure_logging_for_queue
-from moshousapient.configs.behavior_config import Config
-from moshousapient.utils.video_io_utils import ThreadedVideoCapture
-from moshousapient.utils.visualization_utils import (
+from ..services.task_queue_service import TaskQueueService
+from ..services.notification_service import NotificationService
+from ..services.database_service import SessionLocal
+from ..services.database_models import Event
+from ..configs.settings_config import settings
+from ..configs.logging_config import configure_logging_for_queue
+from ..configs.behavior_config import Config
+from ..utils.video_io_utils import ThreadedVideoCapture
+from ..utils.visualization_utils import (
     draw_static_overlays,
     draw_dynamic_overlays,
     draw_info_panel,
