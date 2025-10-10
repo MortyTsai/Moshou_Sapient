@@ -1,0 +1,28 @@
+# .pre-commit-config.yaml
+# ======================================================================
+# MoshouSapient - Pre-commit Hooks 設定檔
+# ======================================================================
+# 說明:
+# 1. 本檔案定義了在每次 `git commit` 前自動執行的品質檢查與修正工具。
+# 2. 它可以確保所有提交到版本庫的程式碼都符合統一的風格與品質標準。
+# 3. 若要手動更新 hooks 到最新版本，請執行 `pre-commit autoupdate`。
+# ======================================================================
+
+repos:
+  # --- Ruff: 極速的 Python Linter 與 Formatter ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # [!!] 參數教學:
+    #    `rev` 指定了要使用的 ruff-pre-commit 的版本標籤。
+    #    `pre-commit autoupdate` 會自動更新此版本號。
+    rev: v0.14.0
+    hooks:
+      # Hook 1: Ruff Linter
+      # 作用: 檢查程式碼中的潛在錯誤、未使用的導入、風格問題等。
+      #       `--fix` 參數會讓它自動修正所有能安全修正的問題。
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+      # Hook 2: Ruff Formatter
+      # 作用: 根據專案的風格設定，自動格式化 Python 程式碼。
+      #       這確保了所有開發者的程式碼風格完全一致。
+      - id: ruff-format

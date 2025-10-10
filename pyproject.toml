@@ -14,3 +14,24 @@ license = { text = "AGPL-3.0-or-later" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pre-commit",
+]
+
+[tool.ruff]
+# 設定程式碼行的最大長度為 120 個字元
+line-length = 120
+
+[tool.ruff.lint]
+# 在這裡可以選擇要啟用或忽略的規則
+
+[tool.ruff.lint.per-file-ignores]
+# 針對特定檔案或目錄忽略規則
+# 由於 jobs 和 workers 子套件下的檔案被設計為可獨立執行的腳本，
+# 它們需要在執行期間動態修改 sys.path，這會導致 import 語句不在檔案頂部。
+# 因此，我們在此處為它們特別豁免 E402 (Module level import not at top of file) 規則。
+"src/moshousapient/jobs/*.py" = ["E402"]
+"src/moshousapient/workers/*.py" = ["E402"]
