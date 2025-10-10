@@ -38,7 +38,11 @@ from moshousapient.configs.settings_config import settings
 from moshousapient.configs.logging_config import configure_logging_for_queue
 from moshousapient.configs.behavior_config import Config
 from moshousapient.utils.video_io_utils import ThreadedVideoCapture
-from moshousapient.utils.visualization_utils import draw_static_overlays, draw_dynamic_overlays, draw_info_panel
+from moshousapient.utils.visualization_utils import (
+    draw_static_overlays,
+    draw_dynamic_overlays,
+    draw_info_panel,
+)
 
 
 class VideoConsumerWorker:
@@ -55,14 +59,11 @@ class VideoConsumerWorker:
         self.worker_id = worker_id
         self.task_queue = TaskQueueService()
         self.stop_event = threading.Event()
-        self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'windows'
+        self.hostname = os.uname().nodename if hasattr(os, "uname") else "windows"
         self.notifier: Optional[NotificationService] = None
         if Config.DISCORD_ENABLED:
             if Config.DISCORD_TOKEN and Config.DISCORD_CHANNEL_ID:
-                self.notifier = NotificationService(
-                    token=Config.DISCORD_TOKEN,
-                    channel_id=Config.DISCORD_CHANNEL_ID
-                )
+                self.notifier = NotificationService(token=Config.DISCORD_TOKEN, channel_id=Config.DISCORD_CHANNEL_ID)
             else:
                 logging.warning(f"[Worker-{self.worker_id}] Discord 功能已啟用，但未提供完整的憑證。通知功能將被禁用。")
         logging.debug(f"[Worker-{self.worker_id}] 初始化完成。")
@@ -93,9 +94,9 @@ class VideoConsumerWorker:
 
         hydrated_frames_data = []
         for frame_meta in frames_metadata:
-            frame_index = frame_meta.get('frame_index')
+            frame_index = frame_meta.get("frame_index")
             if frame_index in video_frames:
-                frame_meta['frame'] = video_frames[frame_index]
+                frame_meta["frame"] = video_frames[frame_index]
                 hydrated_frames_data.append(frame_meta)
         return hydrated_frames_data
 
@@ -138,7 +139,7 @@ class VideoConsumerWorker:
             source_video_path = payload.get("source_video_path")
 
             try:
-                with open(data_path, 'rb') as f:
+                with open(data_path, "rb") as f:
                     event_frames_metadata = pickle.load(f)
             except (IOError, pickle.UnpicklingError) as e:
                 return False, f"無法讀取或反序列化幀數據檔案: {e}"
@@ -155,7 +156,7 @@ class VideoConsumerWorker:
             if not event_frames_data:
                 return False, "加載幀數據後列表為空，處理終止。"
 
-            source_fps = source_meta.get('fps') or 30.0
+            source_fps = source_meta.get("fps") or 30.0
             event_segments = self._segment_event_frames(event_frames_data, source_fps)
 
             rendering_config = {
@@ -166,14 +167,19 @@ class VideoConsumerWorker:
             }
 
             for i, segment_frames in enumerate(event_segments):
-                now = datetime.fromtimestamp(segment_frames[0]['time']) if 'time' in segment_frames[
-                    0] else datetime.now()
+                now = (
+                    datetime.fromtimestamp(segment_frames[0]["time"]) if "time" in segment_frames[0] else datetime.now()
+                )
                 segment_suffix = f"_seg{i + 1}" if len(event_segments) > 1 else ""
                 filename = f"{event_type}_{now.strftime('%Y%m%d_%H%M%S')}{segment_suffix}.mp4"
                 output_path = os.path.join(settings.CAPTURES_DIR, filename)
 
                 success, error_msg = self._encode_segment(
-                    segment_frames, output_path, event_type, source_meta, rendering_config
+                    segment_frames,
+                    output_path,
+                    event_type,
+                    source_meta,
+                    rendering_config,
                 )
                 if not success:
                     return False, f"分段 #{i + 1} 編碼失敗: {error_msg}"
@@ -181,7 +187,10 @@ class VideoConsumerWorker:
             return True, None
 
         except Exception as e:
-            logging.error(f"[Worker-{self.worker_id}] 在 _process_video_task 中發生嚴重錯誤: {e}", exc_info=True)
+            logging.error(
+                f"[Worker-{self.worker_id}] 在 _process_video_task 中發生嚴重錯誤: {e}",
+                exc_info=True,
+            )
             return False, f"未處理的異常: {e}"
         finally:
             if data_path and os.path.exists(data_path):
@@ -190,62 +199,89 @@ class VideoConsumerWorker:
                 except OSError as e:
                     logging.warning(f"[Worker-{self.worker_id}] 清理臨時檔案 {data_path} 失敗: {e}")
 
-    def _encode_segment(self, segment_frames: List[Dict], output_path: str, event_type: str,
-                        source_meta: Dict, rendering_config: Dict) -> Tuple[bool, Optional[str]]:
+    def _encode_segment(
+        self, segment_frames: List[Dict], output_path: str, event_type: str, source_meta: Dict, rendering_config: Dict
+    ) -> Tuple[bool, Optional[str]]:
         """對單個事件分段進行繪圖和編碼。"""
         if not segment_frames:
             return True, None
 
-        source_width = source_meta.get('width') or segment_frames[0]['frame'].shape[1]
-        source_height = source_meta.get('height') or segment_frames[0]['frame'].shape[0]
-        source_fps = source_meta.get('fps') or 30.0
+        source_width = source_meta.get("width") or segment_frames[0]["frame"].shape[1]
+        source_height = source_meta.get("height") or segment_frames[0]["frame"].shape[0]
+        source_fps = source_meta.get("fps") or 30.0
 
         scale_x = source_width / settings.ANALYSIS_WIDTH
         scale_y = source_height / settings.ANALYSIS_HEIGHT
 
-        output_fps = settings.TARGET_FPS if settings.VIDEO_FPS_MODE == "TARGET" and settings.TARGET_FPS > 0 else source_fps
+        is_target_mode = settings.VIDEO_FPS_MODE == "TARGET" and settings.TARGET_FPS > 0
+        output_fps = settings.TARGET_FPS if is_target_mode else source_fps
+        input_framerate = source_fps
 
         ffmpeg_cmd = [
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'rawvideo', '-vcodec', 'rawvideo', '-s', f'{source_width}x{source_height}',
-            '-pix_fmt', 'bgr24', '-framerate', str(output_fps),
-            '-i', '-',
-            '-r', str(output_fps),
-            '-c:v', 'hevc_nvenc', '-preset', 'p6', '-an'
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-s",
+            f"{source_width}x{source_height}",
+            "-pix_fmt",
+            "bgr24",
+            "-framerate",
+            str(input_framerate),
+            "-i",
+            "-",
         ]
+
+        if is_target_mode and abs(source_fps - output_fps) > 0.1:
+            ffmpeg_cmd.extend(["-vf", f"fps={output_fps}"])
+        else:
+            ffmpeg_cmd.extend(["-r", str(output_fps)])
+
+        ffmpeg_cmd.extend(["-c:v", "hevc_nvenc", "-preset", "p6", "-an"])
+
         if settings.VIDEO_ENCODING_MODE == "BALANCED":
             bitrate_str = f"{settings.TARGET_BITRATE_MBPS}M"
-            ffmpeg_cmd.extend(['-rc', 'cbr', '-b:v', bitrate_str, '-maxrate', bitrate_str])
+            ffmpeg_cmd.extend(["-rc", "cbr", "-b:v", bitrate_str, "-maxrate", bitrate_str])
         else:
-            quality_level = '23'
-            ffmpeg_cmd.extend(['-rc', 'vbr', '-cq', quality_level, '-b:v', '0', '-maxrate', '20M'])
-        ffmpeg_cmd.extend(['-pix_fmt', 'yuv420p', output_path])
+            quality_level = "23"
+            ffmpeg_cmd.extend(["-rc", "vbr", "-cq", quality_level, "-b:v", "0", "-maxrate", "20M"])
+
+        ffmpeg_cmd.extend(["-pix_fmt", "yuv420p", output_path])
 
         process = None
         try:
             logging.debug(
-                f"[Worker-{self.worker_id}] 開始為事件 '{event_type}' 的分段編碼 {len(segment_frames)} 幀 (輸出 FPS: {output_fps})...")
+                f"[Worker-{self.worker_id}] 開始為事件 '{event_type}' 的分段編碼 {len(segment_frames)} 幀 "
+                f"(來源 FPS: {source_fps}, 目標 FPS: {output_fps})..."
+            )
             process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
             static_overlay = np.zeros((source_height, source_width, 3), dtype=np.uint8)
             static_overlay = draw_static_overlays(
-                frame=static_overlay, scale_x=scale_x, scale_y=scale_y,
+                frame=static_overlay,
+                scale_x=scale_x,
+                scale_y=scale_y,
                 tripwire_line_thickness=settings.TRIPWIRE_LINE_THICKNESS,
                 tripwire_tip_length=settings.TRIPWIRE_TIP_LENGTH,
-                **rendering_config
+                **rendering_config,
             )
 
             for i, frame_data in enumerate(segment_frames):
-                frame = frame_data['frame']
+                frame = frame_data["frame"]
                 overlay = cv2.add(frame, static_overlay)
 
-                all_tracks = frame_data.get('tracks', [])
-                active_alert_ids = {t['track_id'] for t in all_tracks if t.get('has_crossed_tripwire')}
-                active_roi_ids = {t['track_id'] for t in all_tracks if t.get('is_in_roi')}
+                all_tracks = frame_data.get("tracks", [])
+                active_alert_ids = {t["track_id"] for t in all_tracks if t.get("has_crossed_tripwire")}
+                active_roi_ids = {t["track_id"] for t in all_tracks if t.get("is_in_roi")}
 
                 overlay = draw_dynamic_overlays(overlay, all_tracks, active_alert_ids, active_roi_ids, scale_x, scale_y)
 
-                elapsed_time = i / output_fps
+                elapsed_time = i / input_framerate
                 final_frame = draw_info_panel(overlay, event_type, elapsed_time)
 
                 if process.stdin:
@@ -281,9 +317,11 @@ class VideoConsumerWorker:
                 logging.info(f"[Worker-{self.worker_id}] 事件記錄已寫入資料庫。")
             except Exception as db_err:
                 logging.error(f"[Worker-{self.worker_id}] 寫入資料庫時發生錯誤: {db_err}", exc_info=True)
-                if db: db.rollback()
+                if db:
+                    db.rollback()
             finally:
-                if db: db.close()
+                if db:
+                    db.close()
 
             return True, None
         except (IOError, BrokenPipeError) as e:
@@ -316,11 +354,12 @@ class VideoConsumerWorker:
 
                         is_requeued = False
                         try:
-                            payload = pickle.loads(task['payload'])
-                            if payload.get('task_type') == 'file_inference':
+                            payload = pickle.loads(task["payload"])
+                            if payload.get("task_type") == "file_inference":
                                 logging.debug(
-                                    f"[Worker-{self.worker_id}] 任務 ID: {task['id']} 是 'file_inference' 類型，將其釋放給 Scheduler。")
-                                self.task_queue.fail_task(task['id'], "Requeued for Scheduler", requeue=True)
+                                    f"[Worker-{self.worker_id}] 任務 ID: {task['id']} 是 'file_inference' 類型，將其釋放給 Scheduler。"
+                                )
+                                self.task_queue.fail_task(task["id"], "Requeued for Scheduler", requeue=True)
                                 is_requeued = True
                         except Exception:
                             # 如果 payload 無法解析或沒有 'task_type'，則假定為舊格式的影片編碼任務
@@ -331,20 +370,23 @@ class VideoConsumerWorker:
                             time.sleep(3)
                             continue
 
-                        success, error_message = self._process_video_task(task['payload'])
+                        success, error_message = self._process_video_task(task["payload"])
                         if success:
-                            self.task_queue.complete_task(task['id'])
+                            self.task_queue.complete_task(task["id"])
                         else:
                             final_error_msg = error_message or "Worker processing failed"
                             logging.warning(f"[Worker-{self.worker_id}] 任務 ID: {task['id']} 處理失敗。")
-                            self.task_queue.fail_task(task['id'], final_error_msg)
+                            self.task_queue.fail_task(task["id"], final_error_msg)
                     else:
                         # 如果沒有任務，短暫休眠
                         time.sleep(2)
                 except Exception as e:
-                    logging.error(f"[Worker-{self.worker_id}] 在處理任務時發生未預期的錯誤: {e}", exc_info=True)
-                    if task and 'id' in task:
-                        self.task_queue.fail_task(task['id'], f"Unhandled exception: {e}")
+                    logging.error(
+                        f"[Worker-{self.worker_id}] 在處理任務時發生未預期的錯誤: {e}",
+                        exc_info=True,
+                    )
+                    if task and "id" in task:
+                        self.task_queue.fail_task(task["id"], f"Unhandled exception: {e}")
                     time.sleep(5)
         finally:
             if self.notifier:
