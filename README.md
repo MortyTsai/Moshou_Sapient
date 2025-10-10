@@ -62,7 +62,7 @@ https://github.com/user-attachments/assets/dfd1b02a-1547-458b-8680-2b774ba843d6
 -   **Web 後端**: Flask
 -   **影像處理**: FFmpeg, OpenCV-Python
 -   **設定管理**: Pydantic-Settings, PyYAML
--   **其他**: python-dotenv, watchdog
+-   **其他**: python-dotenv, watchdog, ruff, pre-commit
 
 ## 系統檔案結構
 ```
@@ -70,6 +70,7 @@ MoshouSapient/                                  # 專案根目錄
 │
 ├── .env.example                                # 環境變數設定檔範本
 ├── .gitignore                                  # Git 版本控制忽略清單
+├── .pre-commit-config.yaml                     # 自動化程式碼品質檢查設定檔
 ├── pyproject.toml                              # 專案建置與結構設定檔 (PEP 518/621)
 ├── README.md                                   # 專案說明文件
 ├── requirements.txt                            # Python 依賴套件列表
@@ -89,7 +90,8 @@ MoshouSapient/                                  # 專案根目錄
 ├── models/                                     # 存放所有 AI 模型資產 (.pt, .engine)
 │
 ├── scripts/                                    # 存放與專案核心邏輯無關的輔助開發腳本
-│   └── export_tensorrt.py                      # 將 .pt 模型轉換為 TensorRT 引擎的腳本
+│   ├── export_tensorrt.py                      # 將 .pt 模型轉換為 TensorRT 引擎的腳本
+│   └── repo_to_text.py                         # 將專案打包為 LLM 上下文的快照工具
 │
 └── src/                                        # 存放所有專案原始碼
     └── moshousapient/                          # 專案主 Python 套件
@@ -194,7 +196,17 @@ MoshouSapient/                                  # 專案根目錄
     pip install -r requirements.txt
     ```
 
-5.  **準備 AI 模型**:
+5.  **[可選] 安裝開發工具**:
+    如果您需要對專案進行二次開發，建議安裝開發依賴。這將為您安裝 `ruff` (程式碼格式化與檢查工具) 和 `pre-commit` (自動化 Git 鉤子管理工具)。
+    ```bash
+    # 安裝包含開發工具在內的所有依賴
+    pip install -e .[dev]
+
+    # (僅需執行一次) 安裝 pre-commit 鉤子到您的本地倉庫
+    pre-commit install
+    ```
+
+6.  **準備 AI 模型**:
     -   從指定來源下載 `yolo11s.pt` (物件偵測) 和 `yolo11s-cls.pt` (特徵提取) 模型檔案，並放置在 `models/` 資料夾中。
     -   執行轉換腳本，將**偵測模型**生成為 TensorRT 引擎：
         ```bash
@@ -254,6 +266,8 @@ MoshouSapient/                                  # 專案根目錄
 ## 開發模式說明
 
 本專案的開發過程，是一次探索人類開發者與大型語言模型 (LLM) 協同作業的實踐。在此模式中，人類開發者的角色聚焦於定義高階目標、提供精確技術上下文、以及進行迭代式驗證與除錯，旨在將人類的策略性思考與 LLM 的高效程式碼生成能力相結合，探索一種現代化的軟體開發工作流程。
+
+為了確保程式碼的長期可維護性與一致性，專案已整合 **Ruff** 和 **pre-commit**。這套工具鏈會在每次提交程式碼前，自動進行格式化與靜態分析，從而強制執行統一的程式碼風格與品質標準。
 
 ## License
 
