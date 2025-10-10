@@ -10,6 +10,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.ruff_cache/
 
 # --- 敏感資訊的環境變數檔案 ---
 .env
@@ -38,3 +39,6 @@ data/video_samples/*
 build/
 dist/
 *.egg-info/
+
+# --- LLM 上下文快照工具生成檔案 ---
+moshousapient_snapshot.txt
