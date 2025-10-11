@@ -14,8 +14,8 @@ from typing import Callable
 import numpy as np
 from ultralytics import YOLO
 
-# 3. 本專案相對導入
-from .base_processor import BaseProcessor
+# 3. 本專案導入
+from moshousapient.processors.base_processor import BaseProcessor
 
 
 class InferenceProcessor(BaseProcessor):
