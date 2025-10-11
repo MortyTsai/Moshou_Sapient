@@ -26,12 +26,41 @@ dev = [
 line-length = 120
 
 [tool.ruff.lint]
-# 在這裡可以選擇要啟用或忽略的規則
+# 選擇我們最終確認的、與中文環境完全相容的優化規則集
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes (unused imports, variables, etc.)
+    "I",   # isort (import sorting)
+    "C90", # mccabe complexity
+    "B",   # flake8-bugbear (potential logic errors)
+    "A",   # flake8-builtins (shadowing builtins)
+    "T20", # flake8-print (disallow print)
+    "RUF", # Ruff-specific rules (Unicode safety, etc.)
+    "TID", # flake8-tidy-imports (cleaner imports)
+    "SIM", # flake8-simplify (code simplification)
+    "LOG", # flake8-logging-format (better logging practices)
+    "TRY", # tryceratops (better exception handling)
+]
+
+# 忽略與專案實踐衝突的特定規則
+ignore = [
+    "RUF001", # 忽略：字串中包含易混淆的全形標點 (與中文習慣衝突)
+    "RUF002", # 忽略：文件字串中包含易混淆的全形標點 (與中文習慣衝突)
+    "RUF003", # 忽略：註解中包含易混淆的全形標點 (與中文習慣衝突)
+    "LOG015", # 忽略：在根 logger 上直接呼叫 (與專案的中央化日誌架構衝突)
+    "TRY003", # 忽略：在 raise 語句中使用過長的訊息 (接受當前實踐)
+]
+
 
 [tool.ruff.lint.per-file-ignores]
-# 針對特定檔案或目錄忽略規則
 # 由於 jobs 和 workers 子套件下的檔案被設計為可獨立執行的腳本，
 # 它們需要在執行期間動態修改 sys.path，這會導致 import 語句不在檔案頂部。
 # 因此，我們在此處為它們特別豁免 E402 (Module level import not at top of file) 規則。
 "src/moshousapient/jobs/*.py" = ["E402"]
 "src/moshousapient/workers/*.py" = ["E402"]
+
+[tool.ruff.lint.mccabe]
+# 設定函式圈複雜度的最大值。這是一個關鍵的品質指標，能有效防止函式變得過於複雜、難以維護。
+# 業界公認的合理起點是 10。
+max-complexity = 10
