@@ -4,17 +4,17 @@
 """
 
 # 1. 標準庫導入
-import os
 import logging
+import os
 
 # 2. 第三方庫導入
 from flask import Flask, render_template, send_from_directory
 from sqlalchemy import desc, exc
 
-# 3. 本專案相對導入
-from ..services.database_service import SessionLocal
-from ..services.database_models import Event
-from ..configs.behavior_config import Config
+# 3. 本專案導入
+from moshousapient.configs.behavior_config import Config
+from moshousapient.services.database_models import Event
+from moshousapient.services.database_service import SessionLocal
 
 
 def create_flask_app():
@@ -41,8 +41,8 @@ def create_flask_app():
             events = db.query(Event).order_by(desc(Event.timestamp)).all()
             for event in events:
                 event.video_filename = os.path.basename(event.video_path)
-        except exc.SQLAlchemyError as e:
-            logging.error(f"從資料庫讀取事件時發生錯誤: {e}")
+        except exc.SQLAlchemyError:
+            logging.exception("從資料庫讀取事件時發生錯誤")
         finally:
             db.close()
         return render_template("index.html", events=events)
