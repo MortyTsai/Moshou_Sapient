@@ -5,11 +5,12 @@
 
 # 1. 標準庫導入
 from __future__ import annotations
+
 from typing import List
 
 # 2. 第三方庫導入
-from sqlalchemy import DateTime, func, LargeBinary, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 # 3. 本專案相對導入
 from .database_service import Base
