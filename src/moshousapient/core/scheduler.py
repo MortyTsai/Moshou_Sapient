@@ -14,14 +14,13 @@ import logging
 import subprocess
 import sys
 import threading
-from typing import Optional, Any
+from typing import Any, Optional
 
 # 2. 第三方庫導入
 # (無)
-
-# 3. 本專案相對導入
-from ..configs.settings_config import settings
-from ..services.task_queue_service import TaskQueueService
+# 3. 本專案導入
+from moshousapient.configs.settings_config import settings
+from moshousapient.services.task_queue_service import TaskQueueService
 
 
 class Scheduler:
@@ -60,7 +59,7 @@ class Scheduler:
             self._worker_process.terminate()
             self._worker_process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            logging.error(f"[Scheduler] Job (PID: {self._worker_process.pid}) 未能優雅終止，將強制終止。")
+            logging.exception(f"[Scheduler] Job (PID: {self._worker_process.pid}) 未能優雅終止，將強制終止。")
             self._worker_process.kill()
         finally:
             self._worker_process = None
@@ -73,9 +72,33 @@ class Scheduler:
             command = [sys.executable, "-m", "moshousapient.jobs.queue_inference_job"]
             self._worker_process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logging.info(f"[Scheduler] 已成功啟動佇列推論 Job，PID: {self._worker_process.pid}")
-        except Exception as e:
-            logging.critical(f"[Scheduler] 啟動佇列推論 Job 失敗: {e}", exc_info=True)
+        except Exception:
+            logging.critical("[Scheduler] 啟動佇列推論 Job 失敗", exc_info=True)
             self._worker_process = None
+
+    def _check_and_launch_worker(self, is_rtsp_active: bool):
+        """檢查啟動條件並在滿足時啟動新 Worker。"""
+        if self._worker_process is not None:
+            logging.debug(f"[Scheduler] 佇列推論 Job (PID: {self._worker_process.pid}) 正在運行中。")
+            return
+
+        rescued_count = self._task_queue.reset_stale_processing_tasks(timeout_seconds=10)
+        if rescued_count > 0:
+            logging.info(f"[Scheduler] 已成功救援 {rescued_count} 個卡住的任務。")
+
+        has_pending_tasks = self._task_queue.has_pending_task_by_type("file_inference")
+
+        if has_pending_tasks and not is_rtsp_active:
+            logging.info("[Scheduler] 偵測到待辦任務且 RTSP 閒置，準備啟動佇列推論 Job。")
+            self._launch_worker()
+        else:
+            reasons = []
+            if not has_pending_tasks:
+                reasons.append("無待辦任務")
+            if is_rtsp_active:
+                reasons.append("RTSP 事件活躍")
+            if reasons:
+                logging.debug(f"[Scheduler] 未滿足啟動條件 ({', '.join(reasons)})。")
 
     def _run(self):
         """
@@ -96,30 +119,11 @@ class Scheduler:
                     logging.info(f"[Scheduler] 佇列推論 Job (PID: {self._worker_process.pid}) 已完成工作。")
                     self._worker_process = None
 
-                # 3. 檢查是否滿足啟動新 Worker 的條件
-                if self._worker_process is None:
-                    rescued_count = self._task_queue.reset_stale_processing_tasks(timeout_seconds=10)
-                    if rescued_count > 0:
-                        logging.info(f"[Scheduler] 已成功救援 {rescued_count} 個卡住的任務。")
+                # 3. 檢查是否需要啟動新 Worker
+                self._check_and_launch_worker(is_rtsp_active)
 
-                    has_pending_tasks = self._task_queue.has_pending_task_by_type("file_inference")
-
-                    if has_pending_tasks and not is_rtsp_active:
-                        logging.info("[Scheduler] 偵測到待辦任務且 RTSP 閒置，準備啟動佇列推論 Job。")
-                        self._launch_worker()
-                    else:
-                        reasons = []
-                        if not has_pending_tasks:
-                            reasons.append("無待辦任務")
-                        if is_rtsp_active:
-                            reasons.append("RTSP 事件活躍")
-                        if reasons:
-                            logging.debug(f"[Scheduler] 未滿足啟動條件 ({', '.join(reasons)})。")
-                else:
-                    logging.debug(f"[Scheduler] 佇列推論 Job (PID: {self._worker_process.pid}) 正在運行中。")
-
-            except Exception as e:
-                logging.error(f"[Scheduler] 主循環發生錯誤: {e}", exc_info=True)
+            except Exception:
+                logging.exception("[Scheduler] 主循環發生錯誤")
 
             self._stop_event.wait(self._check_interval_seconds)
 

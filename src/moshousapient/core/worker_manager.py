@@ -4,13 +4,17 @@
 它負責根據應用程式設定啟動、監控和優雅地關閉 Worker 程序池。
 """
 
+# 1. 標準庫導入
 import logging
 import multiprocessing as mp
 import time
 from typing import List
 
-from ..services.task_queue_service import TaskQueueService
-from ..workers.video_consumer_worker import worker_entrypoint
+# 2. 第三方庫導入
+# (無)
+# 3. 本專案導入
+from moshousapient.services.task_queue_service import TaskQueueService
+from moshousapient.workers.video_consumer_worker import worker_entrypoint
 
 
 class WorkerManager:
@@ -26,7 +30,7 @@ class WorkerManager:
         :param log_queue: 用於中央化日誌的 multiprocessing 佇列。
         """
         if num_workers < 1:
-            raise ValueError("Worker 數量必須至少為 1。")
+            raise ValueError("Worker count must be > 0")
         self.num_workers = num_workers
         self.log_queue = log_queue
         self.worker_processes: List[mp.Process] = []
@@ -60,8 +64,8 @@ class WorkerManager:
                 self.worker_processes.append(process)
                 process.start()
                 logging.debug(f"[WorkerManager] {process.name} (PID: {process.pid}) 已成功啟動。")
-            except Exception as e:
-                logging.critical(f"[WorkerManager] 啟動 Worker #{i + 1} 失敗: {e}", exc_info=True)
+            except Exception:
+                logging.critical(f"[WorkerManager] 啟動 Worker #{i + 1} 失敗", exc_info=True)
                 self.shutdown_workers()
                 raise
 
@@ -77,8 +81,8 @@ class WorkerManager:
             if process.is_alive():
                 try:
                     process.terminate()
-                except Exception as e:
-                    logging.error(f"發送終止信號到 {process.name} 失敗: {e}")
+                except Exception:
+                    logging.exception(f"發送終止信號到 {process.name} 失敗")
 
         logging.debug("[WorkerManager] 等待所有 Worker 終止...")
         timeout = 10

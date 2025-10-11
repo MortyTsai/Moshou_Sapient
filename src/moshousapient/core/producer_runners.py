@@ -10,13 +10,12 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import List, Any
+from typing import Any, List
 
 # 2. 第三方庫導入
 # (無)
-
-# 3. 本專案相對導入
-from ..configs.behavior_config import Config
+# 3. 本專案導入
+from moshousapient.configs.behavior_config import Config
 
 
 class BaseRunner(ABC):
