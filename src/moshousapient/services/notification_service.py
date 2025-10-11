@@ -4,13 +4,14 @@
 此模組封裝了與 Discord API 的所有互動，提供了一個簡單的介面來發送訊息和檔案。
 """
 
-import discord
 import asyncio
-import threading
-import os
 import logging
-from typing import List, Optional
+import os
+import threading
 from concurrent.futures import Future
+from typing import List, Optional
+
+import discord
 
 
 class NotificationService:
@@ -67,7 +68,7 @@ class NotificationService:
         finally:
             logging.debug("[Discord] Bot 事件迴圈已停止。")
 
-    async def _send_notification(self, message: str, file_path: str = None):
+    async def _send_notification(self, message: str, file_path: Optional[str] = None):
         """【協程】實際發送通知到 Discord。"""
         if not self.channel:
             logging.error("[Discord] 錯誤: 頻道尚未準備就緒。")
@@ -76,10 +77,10 @@ class NotificationService:
             dfile = discord.File(file_path) if file_path and os.path.exists(file_path) else None
             await self.channel.send(message, file=dfile)
             logging.info(f"[Discord] 已成功將通知發送至 {self.channel.name}")
-        except Exception as e:
-            logging.error(f"[Discord] 錯誤: 發送通知時發生錯誤: {e}", exc_info=True)
+        except Exception:
+            logging.exception("[Discord] 錯誤: 發送通知時發生錯誤")
 
-    def schedule_notification(self, message: str, file_path: str = None):
+    def schedule_notification(self, message: str, file_path: Optional[str] = None):
         """從任何執行緒安全地排程一個通知發送任務。"""
         if self._is_stopping:
             logging.warning("[Discord] Bot 正在關閉，已拒絕新的通知任務。")
@@ -116,8 +117,8 @@ class NotificationService:
             for future in tasks_to_wait:
                 try:
                     future.result(timeout=10)
-                except Exception as e:
-                    logging.error(f"[Discord] 等待通知完成時發生錯誤: {e}")
+                except Exception:
+                    logging.exception("[Discord] 等待通知完成時發生錯誤")
             logging.debug("[Discord] 所有待發送通知已處理完畢。")
 
         if self.client.is_ready() and self.loop and self.loop.is_running():

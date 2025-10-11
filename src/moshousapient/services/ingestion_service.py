@@ -12,17 +12,17 @@
 # 1. 標準庫導入
 import logging
 import pickle
+import threading
 import time
 from pathlib import Path
-import threading
-from typing import Optional
+from typing import ClassVar, List, Optional
 
 # 2. 第三方庫導入
-from watchdog.observers import Observer
 from watchdog.events import PatternMatchingEventHandler
+from watchdog.observers import Observer
 
-# 3. 本專案相對導入
-from ..services.task_queue_service import TaskQueueService
+# 3. 本專案導入
+from moshousapient.services.task_queue_service import TaskQueueService
 
 
 class _VideoFileEventHandler(PatternMatchingEventHandler):
@@ -31,7 +31,7 @@ class _VideoFileEventHandler(PatternMatchingEventHandler):
     """
 
     # 只關心常見的影片檔案格式
-    VIDEO_PATTERNS = ["*.mp4", "*.avi", "*.mov", "*.mkv"]
+    VIDEO_PATTERNS: ClassVar[List[str]] = ["*.mp4", "*.avi", "*.mov", "*.mkv"]
 
     def __init__(self, service_instance: "IngestionService"):
         super().__init__(patterns=self.VIDEO_PATTERNS, ignore_directories=True, case_sensitive=False)
@@ -147,8 +147,5 @@ class IngestionService:
             else:
                 logging.error(f"[IngestionService] 為檔案 '{file_path.name}' 創建任務失敗。")
 
-        except Exception as e:
-            logging.error(
-                f"[IngestionService] 處理檔案 '{file_path.name}' 時發生錯誤: {e}",
-                exc_info=True,
-            )
+        except Exception:
+            logging.exception(f"[IngestionService] 處理檔案 '{file_path.name}' 時發生錯誤")

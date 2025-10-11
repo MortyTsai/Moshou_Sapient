@@ -4,13 +4,17 @@
 此模組負責建立資料庫引擎、管理會話生命週期，並提供基礎模型類別。
 """
 
+# 1. 標準庫導入
 import logging
 import os
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
 
-from ..configs.settings_config import settings
+# 2. 第三方庫導入
+from sqlalchemy import create_engine, event
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# 3. 本專案導入
+from moshousapient.configs.settings_config import settings
 
 DB_FILE = str(settings.DB_FILE)
 
