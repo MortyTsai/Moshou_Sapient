@@ -7,10 +7,10 @@
 """
 
 # 1. 標準庫導入
-from typing import List, Union, Tuple
+from typing import List, Tuple, Union
 
 # 2. 第三方庫導入
-from shapely.geometry import Point, box, Polygon
+from shapely.geometry import Point, Polygon, box
 
 # 為了類型提示，預先定義 Bbox 類型
 Bbox = Tuple[float, float, float, float]
