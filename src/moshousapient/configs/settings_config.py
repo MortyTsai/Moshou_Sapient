@@ -3,9 +3,12 @@
 專案設定模組，使用 Pydantic-Settings 實現類型安全的設定管理。
 """
 
+# 1. 標準庫導入
 import os
 from pathlib import Path
 from typing import Optional
+
+# 2. 第三方庫導入
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
