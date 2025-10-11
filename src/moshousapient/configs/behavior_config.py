@@ -8,15 +8,16 @@
 
 # 1. 標準庫導入
 import logging
+from typing import Any, ClassVar, Dict, List, Union
+
 import yaml
-from typing import Union, List, Dict, Any
 
 # 2. 第三方庫導入
-from shapely.geometry import Polygon, LineString
 from shapely.errors import ShapelyError
+from shapely.geometry import LineString, Polygon
 
-# 3. 本專案相對導入
-from .settings_config import settings
+# 3. 本專案導入
+from moshousapient.configs.settings_config import settings
 
 
 class Config:
@@ -63,18 +64,18 @@ class Config:
     ANCHOR_POINTS: Union[str, List[str]] = "bottom_center"
     # ROI 相關設定
     ROI_ENABLED: bool = False
-    ROI_SETTINGS: Dict[str, Any] = {}
+    ROI_SETTINGS: ClassVar[Dict[str, Any]] = {}
     ROI_POLYGON_OBJECT: Union[Polygon, None] = None
     # Tripwire 相關設定
     TRIPWIRES_ENABLED: bool = False
-    TRIPWIRE_SETTINGS: Dict[str, Any] = {}
-    TRIPWIRE_LINE_OBJECTS: List[Dict[str, Any]] = []
+    TRIPWIRE_SETTINGS: ClassVar[Dict[str, Any]] = {}
+    TRIPWIRE_LINE_OBJECTS: ClassVar[List[Dict[str, Any]]] = []
     # 遮蔽警報設定
     OCCLUSION_ALERT_ENABLED: bool = False
-    OCCLUSION_ALERT_SETTINGS: Dict[str, Any] = {}
+    OCCLUSION_ALERT_SETTINGS: ClassVar[Dict[str, Any]] = {}
     # 畫面異常警報設定
     SCENE_ANOMALY_ALERT_ENABLED: bool = False
-    SCENE_ANOMALY_ALERT_SETTINGS: Dict[str, Any] = {}
+    SCENE_ANOMALY_ALERT_SETTINGS: ClassVar[Dict[str, Any]] = {}
 
     @staticmethod
     def _load_behavior_config():
@@ -112,8 +113,8 @@ class Config:
 
         except FileNotFoundError:
             logging.warning(f"[系統] 找不到行為分析設定檔: {Config.BEHAVIOR_CONFIG_PATH}。將停用所有高階行為分析功能。")
-        except yaml.YAMLError as e:
-            logging.error(f"[系統] 解析行為分析設定檔時發生錯誤: {e}。將停用所有高階行為分析功能。")
+        except yaml.YAMLError:
+            logging.exception("[系統] 解析行為分析設定檔時發生錯誤。將停用所有高階行為分析功能。")
 
     @staticmethod
     def _initialize_roi():
