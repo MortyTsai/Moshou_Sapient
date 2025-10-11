@@ -6,14 +6,14 @@
 """
 
 # 1. 標準庫導入
-from typing import Dict, Any, List, Tuple, Union, cast
+from typing import Any, Dict, List, Tuple, Union, cast
 
 # 2. 第三方庫導入
 import numpy as np
-from shapely.geometry import Point, Polygon, LineString
+from shapely.geometry import LineString, Point, Polygon
 
-# 3. 本專案相對導入
-from .geometry_utils import calculate_anchor_points, get_point_side_of_line
+# 3. 本專案導入
+from moshousapient.utils.geometry_utils import calculate_anchor_points, get_point_side_of_line
 
 
 def analyze_roi_status(
@@ -48,16 +48,68 @@ def analyze_roi_status(
         anchors = calculate_anchor_points(bbox_tuple, anchor_strategy)
 
         for anchor in anchors:
-            if isinstance(anchor, Point):
-                if roi_polygon.contains(anchor):
-                    is_in_roi = True
-                    break
-            elif isinstance(anchor, Polygon):
-                if roi_polygon.intersects(anchor):
-                    is_in_roi = True
-                    break
+            if isinstance(anchor, Point) and roi_polygon.contains(anchor):
+                is_in_roi = True
+                break
+            if isinstance(anchor, Polygon) and roi_polygon.intersects(anchor):
+                is_in_roi = True
+                break
         track_roi_status[track_id] = is_in_roi
     return track_roi_status
+
+
+def _check_single_track_crossing(
+    track: np.ndarray,
+    tripwire_line_objects: List[Dict[str, Any]],
+    global_anchor_points: Union[str, List[str]],
+    updated_positions: Dict[Tuple[int, int], Point],
+) -> Tuple[bool, Dict[Tuple[int, int], Point]]:
+    """檢查單個追蹤目標是否穿越了任何警戒線。"""
+    track_id = int(track[4])
+    bbox = track[:4]
+    has_crossed = False
+
+    for tripwire_obj in tripwire_line_objects:
+        tripwire_line = tripwire_obj["line"]
+        alert_direction = tripwire_obj["direction"]
+        tripwire_config = tripwire_obj["config"]
+
+        anchor_strategy = tripwire_config.get("anchor_points", global_anchor_points)
+        bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
+        current_anchors = calculate_anchor_points(bbox_tuple, anchor_strategy)
+
+        for i, current_anchor in enumerate(current_anchors):
+            if not isinstance(current_anchor, Point):
+                continue
+
+            anchor_key = (track_id, i)
+            last_position = updated_positions.get(anchor_key)
+
+            if last_position and last_position != current_anchor:
+                movement_line = LineString([last_position, current_anchor])
+                if movement_line.intersects(tripwire_line):
+                    p1, p2 = tripwire_line.coords
+                    side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
+                    side_after = get_point_side_of_line(current_anchor, Point(p1), Point(p2))
+
+                    if side_before != 0 and side_after != 0 and side_before != side_after:
+                        crossed_to_right = side_before == 1 and side_after == -1
+                        crossed_to_left = side_before == -1 and side_after == 1
+                        should_alert = (
+                            alert_direction == "both"
+                            or (alert_direction == "cross_to_right" and crossed_to_right)
+                            or (alert_direction == "cross_to_left" and crossed_to_left)
+                        )
+                        if should_alert:
+                            has_crossed = True
+                            break
+
+            updated_positions[anchor_key] = current_anchor
+
+        if has_crossed:
+            break
+
+    return has_crossed, updated_positions
 
 
 def analyze_tripwire_crossings(
@@ -82,51 +134,15 @@ def analyze_tripwire_crossings(
     if not tripwires_enabled or not tripwire_line_objects:
         return {}, track_last_positions
 
-    crossed_ids = {}
+    crossed_ids: Dict[int, bool] = {}
     updated_positions = track_last_positions.copy()
 
     for track in tracks:
         track_id = int(track[4])
-        bbox = track[:4]
-
-        for tripwire_obj in tripwire_line_objects:
-            tripwire_line = tripwire_obj["line"]
-            alert_direction = tripwire_obj["direction"]
-            tripwire_config = tripwire_obj["config"]
-
-            anchor_strategy = tripwire_config.get("anchor_points", global_anchor_points)
-            bbox_tuple = cast(Tuple[float, float, float, float], tuple(bbox))
-            current_anchors = calculate_anchor_points(bbox_tuple, anchor_strategy)
-
-            for i, current_anchor in enumerate(current_anchors):
-                if not isinstance(current_anchor, Point):
-                    continue
-
-                anchor_key = (track_id, i)
-                last_position = updated_positions.get(anchor_key)
-
-                if last_position and last_position != current_anchor:
-                    movement_line = LineString([last_position, current_anchor])
-                    if movement_line.intersects(tripwire_line):
-                        p1, p2 = tripwire_line.coords
-                        side_before = get_point_side_of_line(last_position, Point(p1), Point(p2))
-                        side_after = get_point_side_of_line(current_anchor, Point(p1), Point(p2))
-
-                        if side_before != 0 and side_after != 0 and side_before != side_after:
-                            crossed_to_right = side_before == 1 and side_after == -1
-                            crossed_to_left = side_before == -1 and side_after == 1
-                            should_alert = (
-                                alert_direction == "both"
-                                or (alert_direction == "cross_to_right" and crossed_to_right)
-                                or (alert_direction == "cross_to_left" and crossed_to_left)
-                            )
-                            if should_alert:
-                                crossed_ids[track_id] = True
-                                break
-
-                updated_positions[anchor_key] = current_anchor
-
-            if track_id in crossed_ids:
-                break
+        has_crossed, updated_positions = _check_single_track_crossing(
+            track, tripwire_line_objects, global_anchor_points, updated_positions
+        )
+        if has_crossed:
+            crossed_ids[track_id] = True
 
     return crossed_ids, updated_positions

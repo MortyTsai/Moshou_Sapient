@@ -9,8 +9,8 @@ import logging
 import subprocess
 import threading
 import time
-from queue import Queue, Empty
-from typing import Tuple, Optional
+from queue import Empty, Queue
+from typing import Optional, Tuple
 
 # 2. 第三方庫導入
 import cv2
@@ -110,11 +110,12 @@ def get_video_resolution(video_path: str) -> Optional[Tuple[int, int]]:
             height = data["streams"][0].get("height")
             if width and height:
                 return int(width), int(height)
-        return None
     except (
         FileNotFoundError,
         subprocess.CalledProcessError,
         json.JSONDecodeError,
-    ) as e:
-        logging.error(f"[系統] 獲取影片解析度時出錯: {e}")
+    ):
+        logging.exception("[系統] 獲取影片解析度時出錯")
+        return None
+    else:
         return None

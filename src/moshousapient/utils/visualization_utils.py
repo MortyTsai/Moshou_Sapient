@@ -7,7 +7,7 @@
 """
 
 # 1. 標準庫導入
-from typing import Dict, Any, List, Set, Union
+from typing import Any, Dict, List, Set, Union
 
 # 2. 第三方庫導入
 import cv2
@@ -155,7 +155,7 @@ def draw_info_panel(frame: np.ndarray, event_type: str, elapsed_time: float) -> 
     :param elapsed_time: 事件已持續的時間（秒）。
     :return: 繪製了資訊面板的新影像幀。
     """
-    height, width, _ = frame.shape
+    _, width, _ = frame.shape
     panel_height = 80
 
     # 創建一個半透明的黑色面板

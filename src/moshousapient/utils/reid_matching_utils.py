@@ -11,8 +11,8 @@ from typing import Optional
 import numpy as np
 from numpy.typing import NDArray
 
-# 3. 本專案相對導入
-from ..services.database_models import Person
+# 3. 本專案導入
+from moshousapient.services.database_models import Person
 
 
 def cosine_similarity(feature1: NDArray, feature2: NDArray) -> float:
