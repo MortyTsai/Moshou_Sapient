@@ -6,13 +6,15 @@
 - 開發者日誌 (DEBUG 級別及以上): 輸出到日誌檔案，格式詳細，用於除錯和追蹤。
 """
 
+# 1. 標準庫導入
 import logging
 import logging.handlers
-import sys
 import os
+import sys
 from queue import Queue
 
-from .settings_config import settings
+# 3. 本專案導入
+from moshousapient.configs.settings_config import settings
 
 
 class LevelFilter(logging.Filter):
