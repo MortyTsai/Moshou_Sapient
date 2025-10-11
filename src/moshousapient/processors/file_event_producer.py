@@ -6,13 +6,13 @@
 """
 
 import logging
+import os
 import pickle
 import tempfile
-import os
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..configs.behavior_config import Config
-from ..services.task_queue_service import TaskQueueService
+from moshousapient.configs.behavior_config import Config
+from moshousapient.services.task_queue_service import TaskQueueService
 
 
 class FileEventProducer:
@@ -49,14 +49,12 @@ class FileEventProducer:
             return False, None
 
         for track in tracks:
-            if track.get("has_crossed_tripwire"):
-                if 2 > highest_priority:
-                    highest_priority = 2
-                    active_event_type = "tripwire_alert"
-            if track.get("is_in_roi"):
-                if 1 > highest_priority:
-                    highest_priority = 1
-                    active_event_type = "dwell_alert"
+            if track.get("has_crossed_tripwire") and highest_priority < 2:
+                highest_priority = 2
+                active_event_type = "tripwire_alert"
+            if track.get("is_in_roi") and highest_priority < 1:
+                highest_priority = 1
+                active_event_type = "dwell_alert"
 
         return active_event_type is not None, active_event_type
 

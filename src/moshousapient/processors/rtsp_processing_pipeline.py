@@ -6,20 +6,21 @@
 # 1. 標準庫導入
 import logging
 import threading
-import yaml
 from queue import Queue
 from types import SimpleNamespace
 from typing import Any
+
+import yaml
 
 # 2. 第三方庫導入
 from ultralytics import YOLO
 from ultralytics.trackers import BOTSORT
 
-# 3. 本專案相對導入
-from ..streams.video_streamer import VideoStreamer
-from .inference_processor import InferenceProcessor
-from .rtsp_event_producer import RTSPEventProducer
-from ..configs.behavior_config import Config
+# 3. 本專案導入
+from moshousapient.configs.behavior_config import Config
+from moshousapient.processors.inference_processor import InferenceProcessor
+from moshousapient.processors.rtsp_event_producer import RTSPEventProducer
+from moshousapient.streams.video_streamer import VideoStreamer
 
 
 class RTSPPipeline:
