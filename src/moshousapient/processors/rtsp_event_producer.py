@@ -227,12 +227,16 @@ class RTSPEventProducer(BaseProcessor):
                 self._start_event(current_time)
 
         if self.is_capturing_event:
+            # 如果正在捕獲事件，將當前幀加入事件錄製列表
             self.event_recording_frames.append(frame_data)
+
+            # 檢查事件是否應該結束（人物已消失超過 post_event_seconds）
             post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
             if not person_detected_now and post_event_elapsed:
                 self._end_event(current_time, "人物消失")
-            else:
-                self.frame_buffer.append(frame_data)
+        else:
+            # 如果未在捕獲事件，將當前幀加入預錄緩衝區
+            self.frame_buffer.append(frame_data)
 
     def _dispatch_video_task(self):
         """將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。"""
