@@ -20,6 +20,7 @@ from ultralytics.trackers import BOTSORT
 from moshousapient.configs.behavior_config import Config
 from moshousapient.processors.inference_processor import InferenceProcessor
 from moshousapient.processors.rtsp_event_producer import RTSPEventProducer
+from moshousapient.processors.scene_anomaly_processor import SceneAnomalyProcessor
 from moshousapient.streams.video_streamer import VideoStreamer
 
 
@@ -50,11 +51,17 @@ class RTSPPipeline:
         self.config = camera_config
         self.name = self.config.get("name", "RTSP-Pipeline-Default")
         self.notifier = notifier
-        self.shared_state = {"person_detected": False, "tracked_objects": []}
+        self.shared_state = {
+            "person_detected": False,
+            "tracked_objects": [],
+            "scene_anomaly_detected": False,
+            "scene_anomaly_type": None,
+        }
         self.shared_state_lock = threading.Lock()
 
         self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
         self.inference_queue = Queue(maxsize=2)
+        self.anomaly_queue = Queue(maxsize=int(Config.TARGET_FPS * 2))  # 2 秒緩衝
         buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * Config.TARGET_FPS)
         self.event_queue = Queue(maxsize=buffer_size)
 
@@ -68,13 +75,19 @@ class RTSPPipeline:
                 tracker_factory=self._initialize_tracker,
                 name=f"{self.name}-Inference",
             ),
+            SceneAnomalyProcessor(
+                frame_queue=self.anomaly_queue,
+                shared_state=self.shared_state,
+                state_lock=self.shared_state_lock,
+                name=f"{self.name}-Anomaly",
+            ),
             RTSPEventProducer(
                 frame_queue=self.event_queue,
                 shared_state=self.shared_state,
                 state_lock=self.shared_state_lock,
                 notifier=self.notifier,
                 target_fps=Config.TARGET_FPS,
-                rtsp_event_active_flag=rtsp_event_active_flag,  # 將標誌傳遞下去
+                rtsp_event_active_flag=rtsp_event_active_flag,
                 name=f"{self.name}-Event",
             ),
         ]
@@ -84,7 +97,8 @@ class RTSPPipeline:
         """啟動管線中的所有處理執行緒。"""
         logging.debug(f"[{self.name}] 正在啟動...")
         try:
-            self.video_streamer.start(self.event_queue, self.inference_queue)
+            # 現在需要將幀分發到三個佇列
+            self.video_streamer.start(self.event_queue, self.inference_queue, self.anomaly_queue)
             for processor in self.processors:
                 processor.start()
             logging.info(f"[{self.name}] 所有處理執行緒已成功啟動。")
