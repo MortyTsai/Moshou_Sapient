@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # --- 智慧排程器設定 ---
     SCHEDULER_ENABLED: bool = False
     SCHEDULER_CHECK_INTERVAL: int = 15
+    SCHEDULER_TASK_RESCUE_TIMEOUT: int = 1800  # 任務救援超時 (秒)，預設 30 分鐘
 
     # --- 系統自動生成路徑 (請勿手動修改) ---
     DATA_DIR: Path = PROJECT_ROOT / "data"
