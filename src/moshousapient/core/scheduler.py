@@ -42,8 +42,12 @@ class Scheduler:
         self._worker_process: Optional[subprocess.Popen] = None
 
         self._check_interval_seconds = settings.SCHEDULER_CHECK_INTERVAL
+        self._task_rescue_timeout = settings.SCHEDULER_TASK_RESCUE_TIMEOUT
 
-        logging.debug(f"[Scheduler] 已初始化。檢查間隔: {self._check_interval_seconds}s")
+        logging.debug(
+            f"[Scheduler] 已初始化。檢查間隔: {self._check_interval_seconds}s, "
+            f"任務救援超時: {self._task_rescue_timeout}s"
+        )
 
     def _terminate_worker_process(self, reason: str):
         """
@@ -82,7 +86,7 @@ class Scheduler:
             logging.debug(f"[Scheduler] 佇列推論 Job (PID: {self._worker_process.pid}) 正在運行中。")
             return
 
-        rescued_count = self._task_queue.reset_stale_processing_tasks(timeout_seconds=10)
+        rescued_count = self._task_queue.reset_stale_processing_tasks(timeout_seconds=self._task_rescue_timeout)
         if rescued_count > 0:
             logging.info(f"[Scheduler] 已成功救援 {rescued_count} 個卡住的任務。")
 
