@@ -9,11 +9,33 @@
 from typing import Any, Dict, List, Tuple, Union, cast
 
 # 2. 第三方庫導入
+import cv2
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon
 
 # 3. 本專案導入
 from moshousapient.utils.geometry_utils import calculate_anchor_points, get_point_side_of_line
+
+
+def calculate_laplacian_variance(gray_frame: np.ndarray) -> float:
+    """
+    計算灰度影像的拉普拉斯算子方差。
+    此值可以有效衡量影像的清晰度或紋理複雜度。
+
+    :param gray_frame: 輸入的單通道灰度影像。
+    :return: 拉普拉斯方差值。值越高，表示影像越清晰、細節越多。
+    """
+    return cv2.Laplacian(gray_frame, cv2.CV_64F).var()
+
+
+def calculate_luminance(gray_frame: np.ndarray) -> float:
+    """
+    計算灰度影像的平均亮度。
+
+    :param gray_frame: 輸入的單通道灰度影像。
+    :return: 平均亮度值 (範圍 0-255)。
+    """
+    return np.mean(gray_frame).item()
 
 
 def analyze_roi_status(
