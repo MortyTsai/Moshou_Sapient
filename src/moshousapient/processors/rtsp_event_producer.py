@@ -66,7 +66,7 @@ class RTSPEventProducer(BaseProcessor):
         self.is_capturing_event = False
         self.event_start_time = 0.0
         self.last_event_end_time = 0.0
-        self.last_person_seen_time = 0.0
+        self.last_activity_time = 0.0
         self.current_event_type: Union[str, None] = "person_detected"
         self.event_recording_frames: list = []
 
@@ -81,11 +81,11 @@ class RTSPEventProducer(BaseProcessor):
         )
         logging.debug(f"[{self.name}] 初始化完成。")
 
-    def _start_event(self, current_time: float):
+    def _start_event(self, current_time: float, event_type: str):
         """開始一個新的事件錄製。"""
         self.is_capturing_event = True
         self.event_start_time = current_time
-        self.current_event_type = "person_detected"
+        self.current_event_type = event_type
         self.event_recording_frames = list(self.frame_buffer)
         self.rtsp_event_active_flag.value = True
         logging.info(f"偵測到事件 '{self.current_event_type}'! 開始錄製...")
@@ -109,34 +109,45 @@ class RTSPEventProducer(BaseProcessor):
         """處理單一幀的核心邏輯。"""
         with self.state_lock:
             person_detected_now = self.shared_state.get("person_detected", False)
+            anomaly_detected_now = self.shared_state.get("scene_anomaly_detected", False)
+            anomaly_type = self.shared_state.get("scene_anomaly_type")
             current_tracks_obj = self.shared_state.get("tracked_objects", [])
 
-        current_tracks = np.array(current_tracks_obj)
-        if current_tracks.size == 0:
+        is_active_now = person_detected_now or anomaly_detected_now
+
+        if person_detected_now:
+            current_tracks = np.array(current_tracks_obj)
+            if current_tracks.size == 0:
+                current_tracks = np.empty((0, 8))
+
+            track_roi_status_now = analyze_roi_status(
+                tracks=current_tracks,
+                roi_enabled=Config.ROI_ENABLED,
+                roi_polygon=Config.ROI_POLYGON_OBJECT,
+                roi_settings=Config.ROI_SETTINGS,
+                global_anchor_points=Config.ANCHOR_POINTS,
+            )
+            crossed_ids_map, self.track_last_positions = analyze_tripwire_crossings(
+                tracks=current_tracks,
+                track_last_positions=self.track_last_positions,
+                tripwires_enabled=Config.TRIPWIRES_ENABLED,
+                tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
+                global_anchor_points=Config.ANCHOR_POINTS,
+            )
+
+            if crossed_ids_map:
+                self._handle_tripwire_logic(crossed_ids_map)
+
+            self._handle_dwell_logic(track_roi_status_now, current_time)
+        else:
             current_tracks = np.empty((0, 8))
+            track_roi_status_now = {}
 
-        track_roi_status_now = analyze_roi_status(
-            tracks=current_tracks,
-            roi_enabled=Config.ROI_ENABLED,
-            roi_polygon=Config.ROI_POLYGON_OBJECT,
-            roi_settings=Config.ROI_SETTINGS,
-            global_anchor_points=Config.ANCHOR_POINTS,
-        )
-        crossed_ids_map, self.track_last_positions = analyze_tripwire_crossings(
-            tracks=current_tracks,
-            track_last_positions=self.track_last_positions,
-            tripwires_enabled=Config.TRIPWIRES_ENABLED,
-            tripwire_line_objects=Config.TRIPWIRE_LINE_OBJECTS,
-            global_anchor_points=Config.ANCHOR_POINTS,
-        )
-
-        if crossed_ids_map:
-            self._handle_tripwire_logic(crossed_ids_map)
-
-        self._handle_dwell_logic(track_roi_status_now, current_time)
+        if anomaly_detected_now and anomaly_type:
+            self._set_event_type(f"scene_anomaly_{anomaly_type}")
 
         frame_data = self._prepare_frame_data(item, current_tracks, track_roi_status_now)
-        self._update_event_state(person_detected_now, current_time, frame_data)
+        self._update_event_state(is_active_now, current_time, frame_data)
 
     def _target_func(self):
         """主處理迴圈，持續從佇列中獲取幀並進行行為分析。"""
@@ -218,24 +229,26 @@ class RTSPEventProducer(BaseProcessor):
             "tripwire_alert_ids": alert_ids_snapshot,
         }
 
-    def _update_event_state(self, person_detected_now: bool, current_time: float, frame_data: dict):
+    def _update_event_state(self, is_active_now: bool, current_time: float, frame_data: dict):
         """根據當前狀態更新事件的生命週期（開始、持續、結束）。"""
-        if person_detected_now:
-            self.last_person_seen_time = current_time
+        if is_active_now:
+            self.last_activity_time = current_time
             is_in_cooldown = (current_time - self.last_event_end_time) <= Config.COOLDOWN_PERIOD
             if not self.is_capturing_event and not is_in_cooldown:
-                self._start_event(current_time)
+                # 確定初始事件類型
+                initial_event_type = "person_detected"
+                with self.state_lock:
+                    if self.shared_state.get("scene_anomaly_detected"):
+                        anomaly_type = self.shared_state.get("scene_anomaly_type", "unknown")
+                        initial_event_type = f"scene_anomaly_{anomaly_type}"
+                self._start_event(current_time, initial_event_type)
 
         if self.is_capturing_event:
-            # 如果正在捕獲事件，將當前幀加入事件錄製列表
             self.event_recording_frames.append(frame_data)
-
-            # 檢查事件是否應該結束（人物已消失超過 post_event_seconds）
-            post_event_elapsed = (current_time - self.last_person_seen_time) > Config.POST_EVENT_SECONDS
-            if not person_detected_now and post_event_elapsed:
-                self._end_event(current_time, "人物消失")
+            post_event_elapsed = (current_time - self.last_activity_time) > Config.POST_EVENT_SECONDS
+            if not is_active_now and post_event_elapsed:
+                self._end_event(current_time, "活動消失")
         else:
-            # 如果未在捕獲事件，將當前幀加入預錄緩衝區
             self.frame_buffer.append(frame_data)
 
     def _dispatch_video_task(self):
@@ -266,7 +279,17 @@ class RTSPEventProducer(BaseProcessor):
 
     def _set_event_type(self, new_type: str):
         """根據優先級提升當前事件的類型。"""
-        priority_map = {"tripwire_alert": 2, "dwell_alert": 1, "person_detected": 0}
+        priority_map = {
+            "scene_anomaly_freeze": 4,
+            "scene_anomaly_low_clarity": 3,
+            "tripwire_alert": 2,
+            "dwell_alert": 1,
+            "person_detected": 0,
+        }
+        # 處理其他可能的場景異常類型
+        if new_type.startswith("scene_anomaly_") and new_type not in priority_map:
+            priority_map[new_type] = 3
+
         current_priority = priority_map.get(self.current_event_type, -1)
         new_priority = priority_map.get(new_type, -1)
 
