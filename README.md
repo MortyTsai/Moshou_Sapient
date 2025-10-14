@@ -1,4 +1,4 @@
-# MoshouSapient: AI 智慧影像分析平台
+# MoshouSapient: 個人化 AI 保全系統
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
