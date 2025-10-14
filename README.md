@@ -2,7 +2,7 @@
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11-blue) ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-MoshouSapient 是一個基於 Python 與 NVIDIA TensorRT 技術棧所建構的高效能智慧影像分析平台。系統採用了穩健的**非同步任務佇列架構**，能夠穩定處理 RTSP 即時影像流，並透過**事件驅動的搶佔式排程**高效處理背景影片檔案分析任務。當觸發特定規則時，系統會將結構化的分析結果與事件影片進行持久化儲存，為後續的數據分析和安全審計提供支持。
+MoshouSapient 是一個專為安防場景設計的自主式 AI 保全後端 (Autonomous AI Security Backend)。它的核心設計理念是事件驅動：系統在平時保持低度資源消耗的警戒狀態，僅在偵測到預定義的威脅或異常時，才啟動完整的高效能分析與證據錄製流程。系統整合了 NVIDIA TensorRT 加速的 YOLO 模型與基於 OpenCV 的底層影像分析，並透過一個穩健的非同步任務佇列架構，確保了即時警報的響應速度與大規模事件處理的可靠性。其最終目標是提供一個可被輕鬆整合的、自動化的威脅偵測與證據管理核心，為現代化的安全應用提供動力。
 
 https://github.com/user-attachments/assets/dfd1b02a-1547-458b-8680-2b774ba843d6
 
