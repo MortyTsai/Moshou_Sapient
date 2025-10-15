@@ -7,9 +7,10 @@
 """
 
 # 1. 標準庫導入
+import contextlib
 import logging
 import time
-from queue import Empty, Queue
+from queue import Queue
 from threading import Lock
 from typing import Any, Dict, Optional, Tuple
 
@@ -46,54 +47,43 @@ class SceneAnomalyProcessor(BaseProcessor):
         self.shared_state = shared_state
         self.state_lock = state_lock
 
-        # --- 從設定檔載入參數 ---
         self.settings = Config.SCENE_ANOMALY_ALERT_SETTINGS
         self.enabled = self.settings.get("enabled", False)
         self.calibration_duration = self.settings.get("calibration_duration_seconds", 60)
         self.trigger_delay_seconds = self.settings.get("trigger_delay_seconds", 5)
 
-        # --- 亮度檢查參數 ---
         self.lum_check_enabled = self.settings.get("luminance_check", {}).get("enabled", True)
         lum_dev_percent = self.settings.get("luminance_check", {}).get("deviation_threshold_percent", 80)
         self.lum_lower_ratio = float((100 - lum_dev_percent) / 100.0)
         self.lum_upper_ratio = float((100 + lum_dev_percent) / 100.0)
 
-        # --- 清晰度檢查參數 ---
         self.clarity_check_enabled = self.settings.get("clarity_check", {}).get("enabled", True)
         clarity_dev_percent = self.settings.get("clarity_check", {}).get("deviation_threshold_percent", 70)
         self.clarity_lower_ratio = float((100 - clarity_dev_percent) / 100.0)
         self.clarity_absolute_threshold = float(self.settings.get("clarity_check", {}).get("absolute_threshold", 10.0))
 
-        # --- 畫面凍結檢查參數 ---
         self.freeze_check_enabled = self.settings.get("freeze_check", {}).get("enabled", True)
         self.freeze_diff_threshold = float(self.settings.get("freeze_check", {}).get("difference_threshold", 0.01))
 
-        # --- 攝影機篡改檢查參數 ---
         self.tamper_check_enabled = self.settings.get("tamper_check", {}).get("enabled", True)
         self.tamper_match_threshold = float(
             self.settings.get("tamper_check", {}).get("match_threshold_percent", 40) / 100.0
         )
 
-        # --- 內部狀態變數 ---
         self.is_calibrating = True
         self.start_time = 0.0
         self.last_gray_frame: Optional[np.ndarray] = None
 
-        # --- 用於校準的數據收集器 ---
         self._calibration_luminance_values: list[float] = []
         self._calibration_clarity_values: list[float] = []
 
-        # --- 動態基準線 ---
         self.baseline_luminance: float = 0.0
         self.baseline_clarity: float = 0.0
 
-        # --- 篡改檢測參考數據 ---
-        # noinspection PyUnresolvedReferences
         self.orb_detector = cv2.ORB_create(nfeatures=500)
         self.reference_keypoints: Optional[Tuple] = None
         self.reference_descriptors: Optional[np.ndarray] = None
 
-        # --- 異常狀態計時器 ---
         self.anomaly_start_time: Dict[str, Optional[float]] = {
             "low_luminance": None,
             "high_luminance": None,
@@ -101,6 +91,16 @@ class SceneAnomalyProcessor(BaseProcessor):
             "freeze": None,
             "tamper": None,
         }
+
+    def stop(self):
+        """
+        向處理器發送停止信號，並等待執行緒終止。
+        """
+        self.stop_event.set()
+        with contextlib.suppress(Queue.full):
+            self.frame_queue.put_nowait(None)
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=5)
 
     def _update_baselines_and_reference(self, final_calibration_frame: np.ndarray):
         """根據校準數據計算基準線，並設定篡改檢測的參考幀。"""
@@ -134,7 +134,6 @@ class SceneAnomalyProcessor(BaseProcessor):
 
     def _check_anomalies(self, gray_frame: np.ndarray, current_time: float):
         """對單一灰度幀執行所有異常檢查。"""
-        # 1. 亮度檢查
         if self.lum_check_enabled:
             luminance = calculate_luminance(gray_frame)
             self._check_anomaly_status(
@@ -148,7 +147,6 @@ class SceneAnomalyProcessor(BaseProcessor):
                 current_time,
             )
 
-        # 2. 清晰度檢查
         if self.clarity_check_enabled:
             clarity = calculate_laplacian_variance(gray_frame)
             is_low_clarity = (clarity < self.baseline_clarity * self.clarity_lower_ratio) or (
@@ -156,12 +154,10 @@ class SceneAnomalyProcessor(BaseProcessor):
             )
             self._check_anomaly_status(is_low_clarity, "low_clarity", current_time)
 
-        # 3. 畫面凍結檢查
         if self.freeze_check_enabled and self.last_gray_frame is not None:
             diff = cv2.absdiff(gray_frame, self.last_gray_frame)
             self._check_anomaly_status(float(np.mean(diff)) < self.freeze_diff_threshold, "freeze", current_time)
 
-        # 4. 攝影機篡改檢查
         if self.tamper_check_enabled and self.reference_descriptors is not None and self.reference_keypoints:
             _, des2 = self.orb_detector.detectAndCompute(gray_frame, None)
             is_tampered = True
@@ -198,9 +194,11 @@ class SceneAnomalyProcessor(BaseProcessor):
 
         while not self.stop_event.is_set():
             try:
-                item = self.frame_queue.get(timeout=1)
-                current_time = item["time"]
+                item = self.frame_queue.get()
+                if item is None:
+                    break
 
+                current_time = item["time"]
                 gray_frame = cv2.cvtColor(item["frame"], cv2.COLOR_BGR2GRAY)
                 gray_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
 
@@ -211,7 +209,6 @@ class SceneAnomalyProcessor(BaseProcessor):
                         self._calibration_clarity_values.append(calculate_laplacian_variance(gray_frame))
 
                     if (current_time - self.start_time) >= self.calibration_duration:
-                        # 邏輯修正：確保在校準結束時，使用最後一幀作為參考
                         self._update_baselines_and_reference(gray_frame)
                         self.is_calibrating = False
                 else:
@@ -220,8 +217,6 @@ class SceneAnomalyProcessor(BaseProcessor):
 
                 self.last_gray_frame = gray_frame
 
-            except Empty:
-                continue
             except Exception:
                 logging.exception(f"[{self.name}] 執行緒發生未預期的錯誤")
                 time.sleep(1)
