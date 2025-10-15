@@ -18,6 +18,7 @@ from ultralytics.trackers import BOTSORT
 
 # 3. 本專案導入
 from moshousapient.configs.behavior_config import Config
+from moshousapient.configs.settings_config import settings
 from moshousapient.processors.inference_processor import InferenceProcessor
 from moshousapient.processors.rtsp_event_producer import RTSPEventProducer
 from moshousapient.processors.scene_anomaly_processor import SceneAnomalyProcessor
@@ -58,12 +59,17 @@ class RTSPPipeline:
             "scene_anomaly_type": None,
         }
         self.shared_state_lock = threading.Lock()
-
         self.video_streamer = VideoStreamer(self.config, Config.ANALYSIS_WIDTH, Config.ANALYSIS_HEIGHT)
+        is_target_mode = settings.VIDEO_FPS_MODE == "TARGET" and settings.TARGET_FPS > 0
+        effective_fps = settings.TARGET_FPS if is_target_mode else self.video_streamer.source_fps
+        logging.info(f"[{self.name}] 系統有效幀率設定為: {effective_fps:.2f} FPS (模式: {settings.VIDEO_FPS_MODE})")
         self.inference_queue = Queue(maxsize=2)
-        self.anomaly_queue = Queue(maxsize=int(Config.TARGET_FPS * 2))  # 2 秒緩衝
-        buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * Config.TARGET_FPS)
+        self.anomaly_queue = Queue(maxsize=int(effective_fps * 2))
+        buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * effective_fps)
         self.event_queue = Queue(maxsize=buffer_size)
+        self.video_streamer.add_output_queue(self.inference_queue)
+        self.video_streamer.add_output_queue(self.anomaly_queue)
+        self.video_streamer.add_output_queue(self.event_queue)
 
         self.processors = [
             InferenceProcessor(
@@ -86,7 +92,7 @@ class RTSPPipeline:
                 shared_state=self.shared_state,
                 state_lock=self.shared_state_lock,
                 notifier=self.notifier,
-                target_fps=Config.TARGET_FPS,
+                source_fps=effective_fps,  # <-- 注入有效幀率
                 rtsp_event_active_flag=rtsp_event_active_flag,
                 name=f"{self.name}-Event",
             ),
@@ -97,8 +103,7 @@ class RTSPPipeline:
         """啟動管線中的所有處理執行緒。"""
         logging.debug(f"[{self.name}] 正在啟動...")
         try:
-            # 現在需要將幀分發到三個佇列
-            self.video_streamer.start(self.event_queue, self.inference_queue, self.anomaly_queue)
+            self.video_streamer.start()
             for processor in self.processors:
                 processor.start()
             logging.info(f"[{self.name}] 所有處理執行緒已成功啟動。")
@@ -109,10 +114,10 @@ class RTSPPipeline:
     def stop(self):
         """安全地停止管線中的所有處理執行緒。"""
         logging.debug(f"[{self.name}] 正在關閉...")
-        for processor in self.processors:
-            processor.stop()
         if self.video_streamer:
             self.video_streamer.stop()
+        for processor in self.processors:
+            processor.stop()
         logging.debug(f"[{self.name}] 已安全關閉。")
 
     def is_alive(self) -> bool:
