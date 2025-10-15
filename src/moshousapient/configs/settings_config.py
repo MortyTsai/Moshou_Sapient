@@ -33,8 +33,11 @@ class Settings(BaseSettings):
     # --- 事件錄影參數 ---
     PRE_EVENT_SECONDS: float = 1.0
     POST_EVENT_SECONDS: float = 3.0
-    COOLDOWN_PERIOD: float = 5.0
-    MAX_EVENT_DURATION: float = 10.0
+
+    # --- 即時分段與通知設定 ---
+    ENABLE_REALTIME_SEGMENTATION: bool = True
+    SEGMENT_DURATION_SECONDS: float = 60.0
+    ENABLE_INITIAL_ALERT_TEXT_ONLY: bool = True
 
     # --- 事件影片幀率設定 ---
     VIDEO_FPS_MODE: str = "SOURCE"
