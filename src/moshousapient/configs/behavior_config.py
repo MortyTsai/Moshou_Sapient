@@ -35,8 +35,6 @@ class Config:
     PERSON_MATCH_THRESHOLD: float = settings.PERSON_MATCH_THRESHOLD
     PRE_EVENT_SECONDS: float = settings.PRE_EVENT_SECONDS
     POST_EVENT_SECONDS: float = settings.POST_EVENT_SECONDS
-    COOLDOWN_PERIOD: float = settings.COOLDOWN_PERIOD
-    MAX_EVENT_DURATION: float = settings.MAX_EVENT_DURATION
     VIDEO_FPS_MODE: str = settings.VIDEO_FPS_MODE.upper()
     TARGET_FPS: float = settings.TARGET_FPS
     VIDEO_ENCODING_MODE: str = settings.VIDEO_ENCODING_MODE.upper()
@@ -84,28 +82,23 @@ class Config:
             with open(Config.BEHAVIOR_CONFIG_PATH, "r", encoding="utf-8") as f:
                 behavior_config = yaml.safe_load(f) or {}
 
-            # 1. 載入全域錨點設定 (提供預設值以確保相容性)
             Config.ANCHOR_POINTS = behavior_config.get("anchor_points", "bottom_center")
 
-            # 2. 載入 ROI 設定
             Config.ROI_SETTINGS = behavior_config.get("roi", {})
             if Config.ROI_SETTINGS.get("enabled", False):
                 Config.ROI_ENABLED = True
                 logging.debug("[系統] 已成功載入 ROI 設定。")
 
-            # 3. 載入 Tripwire 設定
             Config.TRIPWIRE_SETTINGS = behavior_config.get("tripwires", {})
             if Config.TRIPWIRE_SETTINGS.get("enabled", False):
                 Config.TRIPWIRES_ENABLED = True
                 logging.debug("[系統] 已成功載入 Tripwires 設定。")
 
-            # 4. 載入遮蔽警報設定
             Config.OCCLUSION_ALERT_SETTINGS = behavior_config.get("occlusion_alerts", {})
             if Config.OCCLUSION_ALERT_SETTINGS.get("enabled", False):
                 Config.OCCLUSION_ALERT_ENABLED = True
                 logging.debug("[系統] 已成功載入 Occlusion Alert 設定。")
 
-            # 5. 載入畫面異常警報設定
             Config.SCENE_ANOMALY_ALERT_SETTINGS = behavior_config.get("scene_anomaly_alerts", {})
             if Config.SCENE_ANOMALY_ALERT_SETTINGS.get("enabled", False):
                 Config.SCENE_ANOMALY_ALERT_ENABLED = True
@@ -158,12 +151,11 @@ class Config:
 
                 line = LineString(points)
                 direction = line_config.get("alert_direction", "both")
-                # 儲存解析後的物件和原始設定
                 Config.TRIPWIRE_LINE_OBJECTS.append(
                     {
                         "line": line,
                         "direction": direction,
-                        "config": line_config,  # 保留原始設定以供後續使用 (例如讀取錨點覆寫)
+                        "config": line_config,
                     }
                 )
             except (ShapelyError, TypeError, KeyError) as e:
@@ -175,6 +167,21 @@ class Config:
             logging.debug("[系統] 未設定任何有效的虛擬警戒線。")
 
     @staticmethod
+    def _validate_and_adjust_settings():
+        """智慧化校驗並調整設定，以確保邏輯一致性。"""
+        if Config.SCENE_ANOMALY_ALERT_ENABLED:
+            trigger_delay = Config.SCENE_ANOMALY_ALERT_SETTINGS.get("trigger_delay_seconds", 3.0)
+            original_pre_event = settings.PRE_EVENT_SECONDS
+            effective_pre_event = original_pre_event + trigger_delay
+
+            Config.PRE_EVENT_SECONDS = effective_pre_event
+            logging.info(
+                f"[設定自動調整] 為確保能錄製到場景異常的完整上下文，"
+                f"有效的預錄時間已自動調整為: {original_pre_event}s (使用者設定) + {trigger_delay}s (觸發延遲) = "
+                f"{effective_pre_event}s。"
+            )
+
+    @staticmethod
     def initialize_static_settings():
         """
         執行所有在模組載入時就應完成的靜態設定初始化。
@@ -182,3 +189,4 @@ class Config:
         Config._load_behavior_config()
         Config._initialize_roi()
         Config._initialize_tripwires()
+        Config._validate_and_adjust_settings()
