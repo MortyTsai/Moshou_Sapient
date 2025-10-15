@@ -14,6 +14,7 @@ from queue import Queue
 from typing import List, Optional
 
 # 2. 第三方庫導入
+import cv2
 import numpy as np
 
 
@@ -31,10 +32,31 @@ class VideoStreamer:
         self.height = height
         self.stopped = False
         self.thread: Optional[threading.Thread] = None
-        self.queues: List[Queue] = []
+        self.output_queues: List[Queue] = []
         self.command = self._build_ffmpeg_command()
         self.process: Optional[subprocess.Popen] = None
-        logging.debug("VideoStreamer 已初始化。")
+        self.source_fps: float = self._get_source_fps()
+        logging.debug(f"VideoStreamer 已初始化。偵測到來源幀率: {self.source_fps:.2f} FPS。")
+
+    def _get_source_fps(self) -> float:
+        """使用 OpenCV 嘗試獲取 RTSP 串流的原始幀率。"""
+        cap = None
+        fps = 30.0
+        try:
+            rtsp_url = self.camera_config.get("rtsp_url")
+            cap = cv2.VideoCapture(rtsp_url)
+            if not cap.isOpened():
+                logging.warning("[串流器] 無法開啟 RTSP 串流以獲取幀率，將使用預設值 30.0 FPS。")
+            else:
+                retrieved_fps = cap.get(cv2.CAP_PROP_FPS)
+                if retrieved_fps > 0:
+                    fps = retrieved_fps
+        except Exception:
+            logging.exception("[串流器] 獲取來源幀率時發生錯誤，將使用預設值 30.0 FPS。")
+        finally:
+            if cap:
+                cap.release()
+        return fps
 
     def _build_ffmpeg_command(self) -> list:
         """根據設定構建 FFmpeg 命令列。"""
@@ -60,47 +82,60 @@ class VideoStreamer:
         )
         return command
 
-    def start(self, *queues: Queue):
+    def add_output_queue(self, queue: Queue):
+        """註冊一個新的輸出佇列。"""
+        self.output_queues.append(queue)
+
+    def start(self):
         """啟動影像流讀取執行緒。"""
-        self.queues = list(queues)
         self.thread = threading.Thread(target=self._update, name="VideoStreamThread", daemon=True)
         self.thread.start()
         logging.debug("[串流器] 生產者執行緒已啟動。")
-        time.sleep(5)  # 給予 FFmpeg 啟動和緩衝時間
+        time.sleep(5)
         if not self.is_alive():
             logging.critical("[串流器] FFmpeg 即時分析程序啟動失敗或立即退出。請檢查 RTSP URL 和網路連線。")
-            # 讓 app_orchestrator 根據 is_alive() 的狀態來決定是否終止應用
             self.stop()
 
-    def _update(self):
-        """在背景執行緒中運行的主函式，負責讀取 FFmpeg 輸出並分發幀。"""
+    def _run_ffmpeg_process(self):
+        """啟動並返回 FFmpeg 子程序。"""
         logging.debug("[串流器] 正在啟動 FFmpeg 即時分析程序...")
         bytes_per_frame = self.width * self.height * 3
-        self.process = subprocess.Popen(
+        process = subprocess.Popen(
             self.command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=bytes_per_frame,
         )
         logging.info("[串流器] FFmpeg 即時分析程序已成功啟動。")
+        return process
 
+    def _broadcast_frames(self):
+        """從 FFmpeg 讀取幀並將其廣播到所有輸出佇列。"""
+        bytes_per_frame = self.width * self.height * 3
         while not self.stopped:
-            if self.process.stdout:
+            if self.process and self.process.stdout:
                 raw_frame = self.process.stdout.read(bytes_per_frame)
                 if len(raw_frame) == bytes_per_frame:
                     frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((self.height, self.width, 3))
                     item = {"frame": frame, "time": time.time()}
-                    for q in self.queues:
+                    for q in self.output_queues:
                         if not q.full():
-                            q.put(item, block=False)
+                            q.put(item)
                 else:
                     if self.process.poll() is not None:
                         logging.warning("[串流器] FFmpeg 即時分析程序已終止。")
                         break
             else:
-                # stdout 可能不存在如果 Popen 失敗
                 logging.error("[串流器] FFmpeg 程序 stdout 不可用。")
                 break
+
+    def _update(self):
+        """在背景執行緒中運行的主函式，負責讀取 FFmpeg 輸出並廣播幀。"""
+        self.process = self._run_ffmpeg_process()
+        self._broadcast_frames()
+
+        for q in self.output_queues:
+            q.put(None)
 
         if self.process and self.process.poll() is None:
             self.process.kill()
