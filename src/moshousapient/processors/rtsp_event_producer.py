@@ -7,15 +7,16 @@
 """
 
 # 1. 標準庫導入
+import contextlib
 import logging
 import os
 import pickle
 import tempfile
 import time
 from collections import deque
-from queue import Empty, Queue
+from queue import Queue
 from threading import Lock
-from typing import Any, Dict, Tuple, Union, cast
+from typing import Any, Dict, Optional, Tuple, Union, cast
 
 # 2. 第三方庫導入
 import numpy as np
@@ -23,6 +24,7 @@ from shapely.geometry import Point
 
 # 3. 本專案導入
 from moshousapient.configs.behavior_config import Config
+from moshousapient.configs.settings_config import settings
 from moshousapient.processors.base_processor import BaseProcessor
 from moshousapient.services.task_queue_service import TaskQueueService
 from moshousapient.utils.behavior_analysis_utils import (
@@ -45,7 +47,7 @@ class RTSPEventProducer(BaseProcessor):
         shared_state: dict,
         state_lock: Lock,
         notifier: Any,
-        target_fps: float,
+        source_fps: float,
         rtsp_event_active_flag: Any,
         name: str = "RTSPEventProducer",
     ):
@@ -57,46 +59,70 @@ class RTSPEventProducer(BaseProcessor):
         self.shared_state = shared_state
         self.state_lock = state_lock
         self.notifier = notifier
-        self.target_fps = target_fps
+        self.source_fps = source_fps if source_fps > 0 else 30.0
         self.task_queue = TaskQueueService()
         self.rtsp_event_active_flag = rtsp_event_active_flag
 
-        buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * target_fps)
+        buffer_size = int((Config.PRE_EVENT_SECONDS + 1.0) * self.source_fps)
         self.frame_buffer = deque(maxlen=buffer_size)
         self.is_capturing_event = False
-        self.event_start_time = 0.0
-        self.last_event_end_time = 0.0
         self.last_activity_time = 0.0
         self.current_event_type: Union[str, None] = "person_detected"
         self.event_recording_frames: list = []
+
+        self.current_event_id: Optional[str] = None
+        self.segment_index: int = 0
+        self.initial_notification_sent: bool = False
+
+        self.segment_frame_count = int(settings.SEGMENT_DURATION_SECONDS * self.source_fps)
 
         self.dwell_time_trackers: Dict[int, Dict[str, Union[float, bool]]] = {}
         self.track_last_positions: Dict[Tuple[int, int], Point] = {}
         self.tripwire_alert_ids: set = set()
 
-        self.last_processed_time = 0.0
-        self.time_accumulator = 0.0
-        self.min_frame_interval = (
-            1.0 / self.target_fps if Config.VIDEO_FPS_MODE == "TARGET" and self.target_fps > 0 else 0
-        )
-        logging.debug(f"[{self.name}] 初始化完成。")
+        logging.debug(f"[{self.name}] 初始化完成。有效幀率: {self.source_fps:.2f}, 預錄緩衝: {buffer_size} 幀。")
+        logging.debug(f"[{self.name}] 分段設定: 每 {self.segment_frame_count} 幀進行一次無縫切分。")
+
+    def stop(self):
+        """
+        向處理器發送停止信號，並等待執行緒終止。
+        """
+        self.stop_event.set()
+        with contextlib.suppress(Queue.full):
+            self.frame_queue.put_nowait(None)
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=5)
 
     def _start_event(self, current_time: float, event_type: str):
         """開始一個新的事件錄製。"""
         self.is_capturing_event = True
-        self.event_start_time = current_time
         self.current_event_type = event_type
         self.event_recording_frames = list(self.frame_buffer)
         self.rtsp_event_active_flag.value = True
+
+        self.current_event_id = f"{event_type}_{int(current_time)}"
+        self.segment_index = 0
+        self.initial_notification_sent = False
+
         logging.info(f"偵測到事件 '{self.current_event_type}'! 開始錄製...")
 
-    def _end_event(self, current_time: float, reason: str):
-        """結束當前事件錄製，並將完整的事件打包發送到佇列。"""
+        if settings.ENABLE_INITIAL_ALERT_TEXT_ONLY and self.notifier and not self.initial_notification_sent:
+            message = (
+                f"**MoshouSapient 即時警報**\n"
+                f"> **事件類型**: `{self.current_event_type}`\n"
+                f"> **發生時間**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`"
+            )
+            self.notifier.schedule_notification(message=message)
+            self.initial_notification_sent = True
+
+    def _end_event(self, reason: str):
+        """結束當前事件錄製，並將剩餘的幀作為最後一個分段發送到佇列。"""
         logging.debug(f"事件結束 ({reason})。")
         if self.event_recording_frames:
-            self._dispatch_video_task()
+            self._dispatch_video_task(is_final_segment=True)
 
-        self.last_event_end_time = current_time
+        self.frame_buffer.clear()
+
         self.is_capturing_event = False
         self.current_event_type = None
         self.event_recording_frames.clear()
@@ -152,36 +178,23 @@ class RTSPEventProducer(BaseProcessor):
     def _target_func(self):
         """主處理迴圈，持續從佇列中獲取幀並進行行為分析。"""
         logging.debug(f"[{self.name}] 處理器已啟動。")
-        self.last_processed_time = time.time()
 
         while not self.stop_event.is_set():
             try:
-                if self.stop_event.is_set() and self.frame_queue.empty():
+                item = self.frame_queue.get()
+
+                if item is None:
                     break
 
-                item = self.frame_queue.get(timeout=1)
                 current_time = item["time"]
-
-                if self.min_frame_interval > 0:
-                    delta_time = current_time - self.last_processed_time
-                    self.last_processed_time = current_time
-                    self.time_accumulator += delta_time
-                    if self.time_accumulator < self.min_frame_interval:
-                        continue
-                    self.time_accumulator -= self.min_frame_interval
-
                 self._process_frame(item, current_time)
 
-            except Empty:
-                if self.is_capturing_event:
-                    self._end_event(time.time(), "影像佇列為空")
-                continue
             except Exception:
                 logging.exception(f"[{self.name}] 執行緒發生未預期的錯誤")
                 time.sleep(1)
 
         if self.is_capturing_event and self.event_recording_frames:
-            self._end_event(time.time(), "系統關閉")
+            self._end_event("系統關閉")
 
         if self.rtsp_event_active_flag.value:
             self.rtsp_event_active_flag.value = False
@@ -231,11 +244,14 @@ class RTSPEventProducer(BaseProcessor):
 
     def _update_event_state(self, is_active_now: bool, current_time: float, frame_data: dict):
         """根據當前狀態更新事件的生命週期（開始、持續、結束）。"""
+        if self.is_capturing_event:
+            self.event_recording_frames.append(frame_data)
+        else:
+            self.frame_buffer.append(frame_data)
+
         if is_active_now:
             self.last_activity_time = current_time
-            is_in_cooldown = (current_time - self.last_event_end_time) <= Config.COOLDOWN_PERIOD
-            if not self.is_capturing_event and not is_in_cooldown:
-                # 確定初始事件類型
+            if not self.is_capturing_event:
                 initial_event_type = "person_detected"
                 with self.state_lock:
                     if self.shared_state.get("scene_anomaly_detected"):
@@ -244,33 +260,54 @@ class RTSPEventProducer(BaseProcessor):
                 self._start_event(current_time, initial_event_type)
 
         if self.is_capturing_event:
-            self.event_recording_frames.append(frame_data)
-            post_event_elapsed = (current_time - self.last_activity_time) > Config.POST_EVENT_SECONDS
-            if not is_active_now and post_event_elapsed:
-                self._end_event(current_time, "活動消失")
-        else:
-            self.frame_buffer.append(frame_data)
+            if settings.ENABLE_REALTIME_SEGMENTATION and len(self.event_recording_frames) >= self.segment_frame_count:
+                self._dispatch_video_task()
 
-    def _dispatch_video_task(self):
-        """將捕獲到的幀數據寫入臨時檔案，並將任務發送到任務佇列。"""
+            if not is_active_now and (current_time - self.last_activity_time) > Config.POST_EVENT_SECONDS:
+                self._end_event("活動消失")
+
+    def _dispatch_video_task(self, is_final_segment: bool = False):
+        """將捕獲到的幀數據打包成任務發送到佇列，並為下一個分段做準備。"""
+        if not self.event_recording_frames:
+            return
+
+        if is_final_segment:
+            frames_to_dispatch = list(self.event_recording_frames)
+            self.event_recording_frames.clear()
+        else:
+            frames_to_dispatch = self.event_recording_frames[: self.segment_frame_count]
+            del self.event_recording_frames[: self.segment_frame_count]
+
+        if not frames_to_dispatch:
+            return
+
         temp_file_path = ""
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl", dir=str(Config.CAPTURES_DIR)) as temp_f:
-                pickle.dump(self.event_recording_frames, temp_f)
+                pickle.dump(frames_to_dispatch, temp_f)
                 temp_file_path = temp_f.name
 
             payload = {
                 "data_path": temp_file_path,
                 "event_type": self.current_event_type,
-                "source_meta": {},  # RTSP 模式下，元數據由消費者端處理
+                "source_meta": {"fps": self.source_fps},
+                "is_segmented": True,
+                "event_id": self.current_event_id,
+                "segment_index": self.segment_index,
+                "is_final_segment": is_final_segment,
             }
             payload_bytes = pickle.dumps(payload)
             task_id = self.task_queue.add_task(payload_bytes)
 
             if task_id:
-                logging.info(f"已成功將事件 '{self.current_event_type}' 作為任務 ID {task_id} 發送到佇列。")
+                log_msg = (
+                    f"已成功將事件 '{self.current_event_type}' (分段 #{self.segment_index}, "
+                    f"{len(frames_to_dispatch)} 幀) 作為任務 ID {task_id} 發送到佇列。"
+                )
+                logging.info(log_msg)
+                self.segment_index += 1
             else:
-                logging.error(f"將事件 '{self.current_event_type}' 發送到任務佇列失敗。")
+                logging.error(f"將事件分段 #{self.segment_index} 發送到任務佇列失敗。")
 
         except (IOError, pickle.PicklingError):
             logging.exception("建立事件任務時發生錯誤")
@@ -286,7 +323,6 @@ class RTSPEventProducer(BaseProcessor):
             "dwell_alert": 1,
             "person_detected": 0,
         }
-        # 處理其他可能的場景異常類型
         if new_type.startswith("scene_anomaly_") and new_type not in priority_map:
             priority_map[new_type] = 3
 
