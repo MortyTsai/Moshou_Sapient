@@ -4,9 +4,10 @@
 """
 
 # 1. 標準庫導入
+import contextlib
 import logging
 import time
-from queue import Empty, Queue
+from queue import Queue
 from threading import Lock
 from typing import Callable
 
@@ -53,23 +54,31 @@ class InferenceProcessor(BaseProcessor):
         self.tracker_factory = tracker_factory
         self.tracker = self.tracker_factory()
 
+    def stop(self):
+        """
+        向處理器發送停止信號，並等待執行緒終止。
+        """
+        self.stop_event.set()
+        with contextlib.suppress(Queue.full):
+            self.frame_queue.put_nowait(None)
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=5)
+
     def _target_func(self):
         """
         主處理迴圈，持續從佇列獲取幀並執行推論和追蹤。
         """
         logging.info(f"[{self.name}] 處理器已啟動，使用 GPU 進行推論。")
         frame_counter = 0
-        reid_interval = 5  # 每 5 幀提取一次 Re-ID 特徵
+        reid_interval = 5
 
         while not self.stop_event.is_set():
             try:
-                if self.stop_event.is_set() and self.frame_queue.empty():
+                item = self.frame_queue.get()
+                if item is None:
                     break
 
-                item = self.frame_queue.get(timeout=1)
                 frame_counter += 1
-
-                # 圖像縮放已在 VideoStreamer 中完成，這裡直接使用
                 frame_for_inference = item["frame"]
 
                 dets_results = self.model(frame_for_inference, device=0, verbose=False, classes=[0], conf=0.4)
@@ -86,8 +95,6 @@ class InferenceProcessor(BaseProcessor):
                     if reid_features_map:
                         self.shared_state["reid_features_map"] = reid_features_map
 
-            except Empty:
-                continue
             except Exception as e:
                 logging.error(f"[{self.name}] 執行緒發生未預期的錯誤: {e}", exc_info=True)
                 time.sleep(1)
