@@ -7,6 +7,7 @@
 """
 
 # 1. 標準庫導入
+import contextlib
 import logging
 import os
 import pickle
@@ -100,28 +101,9 @@ class VideoConsumerWorker:
                 hydrated_frames_data.append(frame_meta)
         return hydrated_frames_data
 
-    @staticmethod
-    def _segment_event_frames(all_frames: List[Dict], source_fps: float) -> List[List[Dict]]:
-        """將一個長的事件幀列表，切分成多個符合 MAX_EVENT_DURATION 的子事件列表。"""
-        max_frames = int(settings.MAX_EVENT_DURATION * source_fps)
-        overlap_frames = int(settings.PRE_EVENT_SECONDS * source_fps)
-
-        if not all_frames or len(all_frames) <= max_frames:
-            return [all_frames]
-
-        logging.debug(f"長事件偵測到 ({len(all_frames)} 幀)，將其切分為多個 {settings.MAX_EVENT_DURATION} 秒的片段。")
-        segments = []
-        start_index = 0
-        while start_index < len(all_frames):
-            end_index = start_index + max_frames
-            segment = all_frames[start_index:end_index]
-            segments.append(segment)
-            if end_index >= len(all_frames):
-                break
-            start_index += max_frames - overlap_frames
-        return segments
-
-    def _load_and_prepare_task_data(self, payload: Dict[str, Any]) -> Tuple[Optional[List[Dict]], Dict, str]:
+    def _load_and_prepare_task_data(
+        self, payload: Dict[str, Any]
+    ) -> Tuple[Optional[List[Dict]], Dict, str, Dict[str, Any]]:
         """從 payload 載入並準備幀數據、元數據和事件類型。"""
         data_path = payload.get("data_path")
         if not data_path:
@@ -132,7 +114,7 @@ class VideoConsumerWorker:
 
         if not event_frames_metadata:
             logging.warning(f"[Worker-{self.worker_id}] 幀數據為空，任務將被跳過。")
-            return None, {}, ""
+            return None, {}, "", {}
 
         source_video_path = payload.get("source_video_path")
         event_frames_data = (
@@ -143,35 +125,49 @@ class VideoConsumerWorker:
 
         source_meta = payload.get("source_meta", {})
         event_type = payload.get("event_type", "unknown_event")
-        return event_frames_data, source_meta, event_type
+        return event_frames_data, source_meta, event_type, payload
+
+    def _generate_output_filename(self, event_type: str, task_info: Dict[str, Any]) -> str:
+        """根據任務資訊生成具描述性的輸出檔名。"""
+        if "time" in task_info.get("event_frames_data", [{}])[0]:
+            now = datetime.fromtimestamp(task_info["event_frames_data"][0]["time"])
+        else:
+            now = datetime.now()
+
+        segment_index = task_info.get("segment_index")
+        is_final_segment = task_info.get("is_final_segment", False)
+        segment_suffix = ""
+        if segment_index is not None:
+            segment_suffix = f"_seg{segment_index + 1}"
+            if segment_index == 0:
+                segment_suffix += "_BEGIN"
+            if is_final_segment:
+                segment_suffix += "_END"
+
+        return f"{event_type}_{now.strftime('%Y%m%d_%H%M%S')}{segment_suffix}.mp4"
 
     def _process_video_task(self, task_payload_bytes: bytes) -> Tuple[bool, Optional[str]]:
-        """處理單個影片任務的核心邏輯（分段、繪圖與編碼）。"""
+        """處理單個影片任務的核心邏輯（繪圖與編碼）。"""
         data_path: Optional[str] = None
         try:
             payload = pickle.loads(task_payload_bytes)
             data_path = payload.get("data_path")
 
-            event_frames_data, source_meta, event_type = self._load_and_prepare_task_data(payload)
+            event_frames_data, source_meta, event_type, task_info = self._load_and_prepare_task_data(payload)
             if not event_frames_data:
                 return True, None
 
-            source_fps = source_meta.get("fps") or 30.0
-            event_segments = self._segment_event_frames(event_frames_data, source_fps)
+            task_info["event_frames_data"] = event_frames_data
 
-            for i, segment_frames in enumerate(event_segments):
-                if "time" in segment_frames[0]:
-                    now = datetime.fromtimestamp(segment_frames[0]["time"])
-                else:
-                    now = datetime.now()
+            # 消費者不再負責分段，直接處理收到的數據
+            filename = self._generate_output_filename(event_type, task_info)
+            output_path = os.path.join(settings.CAPTURES_DIR, filename)
 
-                segment_suffix = f"_seg{i + 1}" if len(event_segments) > 1 else ""
-                filename = f"{event_type}_{now.strftime('%Y%m%d_%H%M%S')}{segment_suffix}.mp4"
-                output_path = os.path.join(settings.CAPTURES_DIR, filename)
-
-                success, error_msg = self._encode_segment(segment_frames, output_path, event_type, source_meta)
-                if not success:
-                    return False, f"Segment #{i + 1} encoding failed: {error_msg}"
+            success, error_msg = self._encode_segment(
+                event_frames_data, output_path, event_type, source_meta, task_info
+            )
+            if not success:
+                return False, f"Segment encoding failed: {error_msg}"
 
         except (pickle.UnpicklingError, IOError, ValueError) as e:
             return False, f"Failed to read/prepare task data: {e}"
@@ -182,10 +178,8 @@ class VideoConsumerWorker:
             return True, None
         finally:
             if data_path and os.path.exists(data_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(data_path)
-                except OSError as e:
-                    logging.warning(f"[Worker-{self.worker_id}] Failed to clean up temp file {data_path}: {e}")
 
     @staticmethod
     def _build_ffmpeg_command(output_path: str, source_width: int, source_height: int, source_fps: float) -> List[str]:
@@ -252,10 +246,10 @@ class VideoConsumerWorker:
         overlay = draw_dynamic_overlays(overlay, all_tracks, active_alert_ids, active_roi_ids, scale_x, scale_y)
         return overlay
 
-    def _finalize_segment_processing(self, event_type: str, output_path: str):
+    def _finalize_segment_processing(self, event_type: str, output_path: str, task_info: Dict[str, Any]):
         """在編碼成功後，記錄日誌、發送通知並寫入資料庫。"""
         logging.info(f"[Worker-{self.worker_id}] 事件影片已儲存至: {os.path.basename(output_path)}")
-        self._notify_and_log_event(event_type, output_path)
+        self._notify_and_log_event(event_type, output_path, task_info)
 
     def _run_ffmpeg_process(
         self,
@@ -288,7 +282,12 @@ class VideoConsumerWorker:
         return True, None
 
     def _encode_segment(
-        self, segment_frames: List[Dict], output_path: str, event_type: str, source_meta: Dict[str, Any]
+        self,
+        segment_frames: List[Dict],
+        output_path: str,
+        event_type: str,
+        source_meta: Dict[str, Any],
+        task_info: Dict[str, Any],
     ) -> Tuple[bool, Optional[str]]:
         """對單個事件分段進行繪圖和編碼。"""
         if not segment_frames:
@@ -310,7 +309,7 @@ class VideoConsumerWorker:
             if not success:
                 return False, error_msg
 
-            self._finalize_segment_processing(event_type, output_path)
+            self._finalize_segment_processing(event_type, output_path, task_info)
 
         except (IOError, BrokenPipeError) as e:
             return False, f"FFmpeg pipe error: {e}"
@@ -320,11 +319,18 @@ class VideoConsumerWorker:
         else:
             return True, None
 
-    def _notify_and_log_event(self, event_type: str, output_path: str):
+    def _notify_and_log_event(self, event_type: str, output_path: str, task_info: Dict[str, Any]):
         """發送通知並將事件記錄到資料庫。"""
-        if self.notifier:
+        should_notify = False
+        is_first_segment = task_info.get("segment_index", -1) == 0
+        is_final_segment = task_info.get("is_final_segment", False)
+        if not task_info.get("is_segmented", False) or is_first_segment or is_final_segment:
+            should_notify = True
+
+        if self.notifier and should_notify:
+            alert_type = "事件開始" if is_first_segment else "事件結束" if is_final_segment else "事件"
             message = (
-                f"**MoshouSapient 安全警報**\n"
+                f"**MoshouSapient 安全警報 - {alert_type}**\n"
                 f"> **事件類型**: `{event_type}`\n"
                 f"> **發生時間**: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n"
                 f"> **處理單元**: `Worker-{self.worker_id}@{self.hostname}`"
