@@ -127,5 +127,18 @@ MoshouSapient 目前的地端單機版（Standalone）已成功完成概念驗�
 
 ---
 
-## 授權
-本專案採用 [AGPL-3.0 License](https://www.gnu.org/licenses/agpl-3.0.html) 授權。
+## ⚖️ 法律與授權聲明 (Legal & License)
+
+### 1. 專案授權
+本專案的原始碼採用 [AGPL-3.0-or-later](https://www.gnu.org/licenses/agpl-3.0.html) 授權。
+
+### 2. 第三方軟體與 TensorRT 聲明
+本專案整合了 NVIDIA TensorRT 以實現高效能推論。請注意：
+- **非散佈性質**：本專案**不散佈**任何由 NVIDIA 提供的二進位檔案、庫檔案 (.so/.dll) 或預編譯的 TensorRT 引擎檔案 (.engine)。
+- **使用者責任**：使用者在執行 `scripts/export_tensorrt.py` 產生引擎檔案時，即代表使用者已同意並遵守 [NVIDIA TensorRT 授權協議 (EULA)](https://developer.nvidia.com/)。
+- **授權衝突說明**：本專案僅提供「實作指南（原始碼）」。由於 TensorRT 為專有軟體，其授權條款與 AGPL-3.0 不同。使用者在本地端自行編譯與使用之行為，不構成對 TensorRT 專有軟體的非法散佈。
+
+### 3. 關鍵應用免責聲明 (Critical Application Disclaimer)
+**警告**：本系統僅供個人學習、研究及一般安防參考。
+- 本系統**未經過** NVIDIA 或任何認證機構的安全性測試，**絕對禁止**將其用於任何涉及人類生命安全、醫療維生、軍事防禦或自動駕駛等「關鍵應用 (Critical Applications)」場景。
+- 開發者對因使用本系統而導致的任何直接或間接損失（包括但不限於財產損失、漏報或誤報）不承擔任何法律責任。
